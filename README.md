@@ -1,165 +1,206 @@
 # resumed
 
-A job tracker and resume tailor. One Go binary, one SQLite database, two faces:
+resumed tracks job applications. It builds a tailored resume and cover letter
+for each one from a fact base. It is one Go binary and one SQLite database.
 
-- **MCP server** (`resumed mcp`) — what Claude drives.
-- **Web UI** (`resumed serve`) — what you use.
+You can use it three ways:
 
-Output is Typst, compiled to PDF with the ATS-hardened template from
-`templates/ats-resume.typ`.
+- **MCP server** (`resumed mcp`). Claude Code drives this.
+- **Web UI** (`resumed serve`). You use this to answer questions and read output.
+- **Command line** (`resumed render`, `resumed import`, and so on).
 
-## The idea
+The output is Typst. Typst compiles it to PDF.
+
+## How it works
 
 The database has two halves.
 
-**The fact base** — profile, contacts, roles, bullets, projects, patents,
-skills. Everything that is actually true about you, each row with an id.
+**The fact base** holds your profile, contacts, roles, bullets, projects,
+patents, and skills. Every row is something that is true about you, and every
+row has an id.
 
-**The application track** — jobs, notes, questions, and one resume per job.
+**The application track** holds jobs, notes, questions, one resume per job, and
+one cover letter per job.
 
-A tailored resume is a *selection over the fact base*, never free text.
-`save_resume` takes ids, not prose. An item may carry an `override_text` to
-reword a bullet for a particular posting, but it cannot exist without a fact row
-behind it, and `CreateResume` rejects any id that is not in the fact base. That
-single constraint is what stops a tailored resume from drifting into fiction.
+A tailored resume is a selection of facts. It is not free text. The
+`save_resume` tool takes ids, not prose. An item can carry an `override_text`
+value to reword a bullet for one posting, but the item cannot exist without a
+fact row behind it. `CreateResume` rejects any id that the fact base does not
+hold. That rule is what keeps a tailored resume honest.
 
-When a posting wants something the fact base does not cover, the path is:
+When a posting needs something the fact base does not have, follow this path:
 
 ```
 ask_questions  ->  you answer in the web UI  ->  add_facts
 ```
 
-so new material enters through you, with an audit trail, rather than being
-invented at render time.
+New material enters through you, and the questions record where it came from.
+Nothing is invented at render time.
 
-**Retiring a fact** keeps the row but stops new resumes using it — for facts
-that were superseded, worded badly, or are no longer worth claiming. Retirement
-is deliberately not a delete: the resume already generated for a job references
-its facts by id and must keep rendering exactly as it was, so retired facts stay
-visible to the renderer and are hidden only from new tailoring. Retire from the
-Facts page or with the `retire_facts` tool; `restore` undoes it.
+**Cover letters work differently.** A letter argues instead of selecting, so
+resumed stores it as text. The schema cannot enforce honesty here. Instead, the
+tool description tells the assistant to trace every claim back to a fact. A
+`rationale` field records which facts the letter uses. Write a letter with
+`save_cover_letter`.
 
-**One resume per job.** Re-tailoring replaces the job's resume rather than
-stacking versions, and always writes `resume.typ` / `resume.pdf`.
+**Retire a fact** when it is superseded, worded badly, or no longer worth
+claiming. Retiring keeps the row but hides it from new tailoring. It is not a
+delete. A resume you already sent points at its facts by id and must render the
+same way later, so the renderer still sees retired facts. Retire a fact on the
+Facts page or with the `retire_facts` tool. Pass `restore` to undo it.
 
-## Setup
+**Each job has one resume and one cover letter.** Tailoring again replaces the
+old one. The files are always `resume.typ`, `resume.pdf`, `cover-letter.typ`,
+and `cover-letter.pdf`.
+
+## Install
 
 ```sh
-brew install typst                     # PDF rendering (optional; .typ is always written)
-go build -o bin/resumed ./cmd/resumed
-bin/resumed import seed/facts.json     # load the fact base
+brew install typst          # optional; resumed always writes the .typ file
+make build                  # or: go build -o bin/resumed ./cmd/resumed
+bin/resumed import seed/facts.json
 ```
 
-Register the MCP server with Claude:
+`seed/facts.json` holds example data. Replace it with your own facts.
+
+## Register the MCP server
 
 ```sh
 bin/resumed install --db ../resumed.db --out ../jobs
 ```
 
-That writes `.mcp.json` in the current directory with **absolute** paths —
-Claude launches the server with a working directory you do not control, so
-anything relative would resolve wrong. Existing servers in the file are kept.
+This writes `.mcp.json` in the current directory. The paths in it are absolute.
+Claude Code starts the server with a working directory that you do not control,
+so a relative path would point at the wrong place. The command keeps any other
+servers already in the file.
 
 | Flag | Meaning |
 | --- | --- |
-| `--scope project` | `.mcp.json` in the current directory (default; commit it to share) |
-| `--scope local` | just you, just this project |
-| `--scope user` | every project you open |
-| `--name` | server name Claude shows (default `resumed`) |
-| `--force` | replace an existing entry of the same name |
-| `--print` | show what would be written, change nothing |
+| `--scope project` | Write `.mcp.json` in the current directory. This is the default. |
+| `--scope local` | Register for you only, in this project only. |
+| `--scope user` | Register for every project you open. |
+| `--name` | Set the server name that Claude Code shows. The default is `resumed`. |
+| `--force` | Replace an entry that has the same name. |
+| `--print` | Show what the command would write, and change nothing. |
 
-`project` scope is merged directly. `local` and `user` live in `~/.claude.json`,
-so those delegate to `claude mcp add` rather than hand-editing the CLI's own
-config; if the `claude` binary is missing, install prints the command to run.
-Restart Claude Code (or `/mcp`) afterwards — project servers need approval on
-first use.
+Project scope is merged into the file directly. Local scope and user scope live
+in `~/.claude.json`, so `install` calls `claude mcp add` for those instead of
+editing that file. If the `claude` binary is missing, `install` prints the
+command for you to run.
 
-Run the site:
+Restart Claude Code afterwards, or run `/mcp`. A project server needs your
+approval the first time it runs.
+
+## Run the web UI
 
 ```sh
-bin/resumed serve --db ../resumed.db --out ../jobs --addr 0.0.0.0:7777
+make serve DB=../resumed.db OUT=../jobs
 ```
 
-Flags apply to every command: `--db` (env `RESUMED_DB`), `--out`
-(env `RESUMED_OUT`), `--addr` (env `RESUMED_ADDR`). Defaults live under
+The UI binds to `127.0.0.1:7777` by default. To reach it from another device,
+run `make serve-lan`. Read the warning it prints first. The UI has no
+authentication. It shows your contact details, your employment history, and
+every application you are tracking.
+
+Three flags work on every command: `--db` (or `RESUMED_DB`), `--out` (or
+`RESUMED_OUT`), and `--addr` (or `RESUMED_ADDR`). The defaults live in
 `~/.resumed/`.
 
-## Using it
+## Use it
 
-Ask Claude something like:
+Ask Claude Code something like this:
 
 > Tailor my resume for https://example.com/careers/staff-backend-engineer
 
-Claude will add the job, read the fact base, tailor a resume, and usually queue
-a couple of questions. Answer those at <http://localhost:7777/questions>, then
-tell Claude to fold them in and re-tailor. Generated files land in
-`jobs/<company>/<title>/resume.{typ,pdf}`.
+Claude Code adds the job, reads the fact base, tailors a resume, and usually
+queues a few questions. Answer them at <http://localhost:7777/questions>. Then
+ask for the answers to be added and the resume to be tailored again. The files
+are written to `jobs/<company>/<title>/`.
 
 ## MCP tools
 
 | Tool | Purpose |
 | --- | --- |
-| `get_fact_base` | Every fact with its id — read before tailoring |
-| `add_facts` | Promote confirmed answers into the fact base |
-| `add_job` | Save a posting; fetches and parses the URL |
-| `list_jobs` / `get_job` | Browse tracked jobs |
-| `update_job` | Change status or metadata |
-| `add_job_note` | Timestamped note on a job |
-| `ask_questions` | Queue questions for the user |
-| `list_questions` | Check for answers |
-| `retire_facts` | Retire a fact from new tailoring, or restore it |
-| `save_resume` | Tailor by selecting fact ids; renders Typst + PDF |
-| `get_resume` | Fetch a job's resume with its Typst source |
-| `render_resume` | Re-render after facts change |
+| `get_fact_base` | Return every fact with its id. Read this before tailoring. |
+| `add_facts` | Add confirmed answers to the fact base. |
+| `retire_facts` | Retire a fact from new tailoring, or restore it. |
+| `add_job` | Save a posting. Fetches and parses the URL. |
+| `list_jobs`, `get_job` | Browse tracked jobs. |
+| `update_job` | Change a job's status or metadata. |
+| `add_job_note` | Add a dated note to a job. |
+| `ask_questions` | Queue questions for you to answer. |
+| `list_questions` | Check for answers. |
+| `save_resume` | Tailor a resume by selecting fact ids. Renders Typst and PDF. |
+| `get_resume` | Return a job's resume and its Typst source. |
+| `render_resume` | Render a resume again after its facts change. |
+| `save_cover_letter` | Write or replace a job's cover letter. Renders Typst and PDF. |
+| `get_cover_letter` | Return a job's cover letter and its Typst source. |
+| `render_cover_letter` | Render a cover letter again. |
 
-Job fetching runs in layers, best source first: schema.org `JobPosting` JSON-LD,
-then Open Graph tags, then the employer slug in the URL for known ATS hosts,
-then the `<title>` split on "role at company". No single layer covers the field —
-Greenhouse's `job-boards.greenhouse.io`, probably the most common board, serves
-no JSON-LD at all and a placeholder `<title>`, so its metadata comes entirely
-from Open Graph and the URL. A JavaScript-rendered page that yields nothing
-still saves the job — paste the description in the UI or via `update_job`.
+## Job fetching
+
+`add_job` reads a posting in four steps and uses the best source it finds.
+First it looks for schema.org `JobPosting` data in JSON-LD. Then it reads Open
+Graph tags. Then it takes the employer name from the URL, for job boards it
+recognises. Last it splits the `<title>` on "role at company".
+
+No single step covers every board. Greenhouse serves no JSON-LD and a
+placeholder `<title>`, so its data comes only from Open Graph and the URL.
+
+A page built by JavaScript may yield nothing. resumed still saves the job. Paste
+the description into the web UI, or send it with `update_job`.
 
 ## Web UI
 
-Server-rendered HTML with [htmx](https://htmx.org) (vendored, no CDN). Every
-mutating endpoint returns the fragment it changed, so the same handler serves a
-full page on a cold load and a partial to htmx. No JSON API, no client state.
+The server renders HTML and uses [htmx](https://htmx.org), which is vendored
+rather than loaded from a CDN. Every endpoint that changes something returns the
+fragment it changed. The same handler serves a full page on a cold load and a
+fragment to htmx. There is no JSON API and no client state.
 
-- `/` — tracked jobs, filter by status, add by URL
-- `/jobs/{id}` — posting, the current resume, notes, questions, status
-- `/questions` — answer what Claude asked; answered ones can be edited in place
-- `/facts` — browse the fact base with ids; retire and restore facts
+- `/` lists tracked jobs. Filter by status, or add a job by URL.
+- `/jobs/{id}` shows the posting, the resume, the cover letter, notes, questions, and status.
+- `/questions` is where you answer what the assistant asked. You can edit an answer later.
+- `/facts` browses the fact base with ids. Retire and restore facts here.
 
-Editing an answer preserves its original answered-at date, so fixing a typo does
-not make the answer look new. Answers can be revised from either the questions
-inbox or the job page. After changing one, ask Claude to re-tailor — the fact
-base is not updated automatically.
+Editing an answer keeps its original answer date, so fixing a typo does not make
+the answer look new. You can revise an answer from the questions page or the job
+page. The fact base does not update by itself, so ask for the resume to be
+tailored again afterwards.
 
 ## Layout
 
 ```
-cmd/resumed/         CLI: mcp | serve | import | export | render
-internal/store/      schema, queries, and Assemble (resume -> renderable doc)
-internal/render/     Typst generation + escaping, typst compile
-internal/fetch/      job posting fetch: JSON-LD then HTML text
+cmd/resumed/         CLI: mcp | serve | import | export | render | render-cover
+internal/store/      schema, queries, and Assemble (resume -> renderable document)
+internal/render/     Typst generation, escaping, and the typst compile step
+internal/fetch/      job posting fetch
 internal/mcpsrv/     MCP tool definitions
-internal/web/        htmx UI, templates, static assets
-internal/app/        operations shared by MCP and web
-seed/facts.json      importable fact base
+internal/web/        htmx UI, templates, and static assets
+internal/app/        operations shared by all three interfaces
+seed/facts.json      example fact base
 ```
 
 ## Tests
 
 ```sh
-go test ./...
+make check     # gofmt, vet, and tests
+make test      # tests only
 ```
 
-`internal/render` compiles adversarial bullet text (`C++`, `mod_dims`, `#1`,
-`80%`, leading `-`/`=`) through real typst and asserts escaping is lossless —
-silently swallowing a character is worse than failing to build.
+`internal/render` compiles difficult text through the real typst binary. The
+text contains every character that Typst treats as markup, such as `C++`,
+`mod_dims`, `#1`, `80%`, and a leading `-` or `=`. The test then asserts that
+escaping loses nothing. A resume that drops a character quietly is worse than
+one that fails to build.
 
-`internal/store` covers the retirement invariant: a resume that cites a fact
-must still render after that fact is retired. If that breaks, retiring a fact
-silently corrupts a resume you may already have sent.
+`internal/store` tests the retirement rule: a resume that cites a fact must
+still render after you retire that fact. If that breaks, retiring a fact
+corrupts a resume you may have already sent.
+
+`internal/app` tests that output paths resolve to absolute paths. The database
+records where each file was written, so a relative path would only work from the
+directory that ran the render.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
