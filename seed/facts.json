@@ -1,0 +1,172 @@
+{
+  "profile": {
+    "name": "Pat Example",
+    "location": "Springfield, IL",
+    "summary": "Backend engineer and team lead with 12 years building distributed services and the tooling other engineers depend on. Comfortable in Go, Python, and TypeScript, and equally at home in Kubernetes, Terraform, and CI pipelines. This file is example data — replace it with your own before you tailor anything."
+  },
+  "contacts": [
+    { "id": 1, "kind": "email", "value": "pat@example.com", "url": "mailto:pat@example.com" },
+    { "id": 2, "kind": "phone", "value": "555-0100", "url": "tel:+15550100" },
+    { "id": 3, "kind": "github", "value": "github.com/example", "url": "https://github.com/example" },
+    { "id": 4, "kind": "linkedin", "value": "linkedin.com/in/example", "url": "https://linkedin.com/in/example" }
+  ],
+  "roles": [
+    {
+      "id": 1,
+      "company": "Northwind Systems",
+      "location": "Remote",
+      "title": "Staff Engineer, Platform",
+      "start_date": "Mar 2021",
+      "end_date": "Present",
+      "summary": "Led the internal developer platform for a 60-engineer product org",
+      "bullets": [
+        {
+          "id": 1,
+          "role_id": 1,
+          "text": "Cut median deploy time from 40 minutes to under 6 by replacing hand-rolled shell scripts with a Terraform and Argo pipeline.",
+          "tags": "ci-cd,terraform,argo,developer-experience,velocity",
+          "source": "resume"
+        },
+        {
+          "id": 2,
+          "role_id": 1,
+          "text": "Built ephemeral preview environments for every pull request, each with a seeded database.",
+          "tags": "environments,kubernetes,developer-experience,testing",
+          "source": "resume"
+        },
+        {
+          "id": 3,
+          "role_id": 1,
+          "text": "Mentored four engineers, two of whom were promoted to senior during the same period.",
+          "tags": "mentorship,management,career-development,leadership",
+          "source": "interview"
+        },
+        {
+          "id": 4,
+          "role_id": 1,
+          "text": "Ran the on-call rotation and rewrote the alert catalogue so every page names a concrete first action.",
+          "tags": "oncall,reliability,alerting,observability,team-practices",
+          "source": "interview"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "company": "Contoso Media",
+      "location": "Chicago, IL",
+      "title": "Senior Backend Engineer",
+      "start_date": "Jun 2017",
+      "end_date": "Feb 2021",
+      "summary": "Owned the content delivery services behind a high-traffic publishing site",
+      "bullets": [
+        {
+          "id": 5,
+          "role_id": 2,
+          "text": "Designed a read-through cache that absorbed a 12x traffic spike on election night with no downtime.",
+          "tags": "caching,scale,reliability,distributed-systems",
+          "source": "resume"
+        },
+        {
+          "id": 6,
+          "role_id": 2,
+          "text": "Migrated 40 million articles off a legacy CMS with a reversible, batch-at-a-time cutover.",
+          "tags": "migration,data,scale,risk-management",
+          "source": "resume"
+        },
+        {
+          "id": 7,
+          "role_id": 2,
+          "text": "Introduced structured logging and per-service dashboards, halving median incident diagnosis time.",
+          "tags": "observability,logging,dashboards,incident-response",
+          "source": "resume"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "company": "Initech",
+      "location": "Springfield, IL",
+      "title": "Software Engineer",
+      "start_date": "Aug 2013",
+      "end_date": "May 2017",
+      "summary": "Built and maintained internal line-of-business services",
+      "bullets": [
+        {
+          "id": 8,
+          "role_id": 3,
+          "text": "Replaced a nightly batch reconciliation job with an event-driven pipeline, moving results from next-day to near real time.",
+          "tags": "events,pipelines,backend,latency",
+          "source": "resume"
+        },
+        {
+          "id": 9,
+          "role_id": 3,
+          "text": "Wrote the team's first integration test suite and wired it into CI.",
+          "tags": "testing,ci,quality,developer-experience",
+          "source": "resume"
+        }
+      ]
+    }
+  ],
+  "projects": [
+    {
+      "id": 1,
+      "name": "queuelite",
+      "url": "github.com/example/queuelite",
+      "date": "2023 - Present",
+      "summary": "Small embeddable job queue for Go backed by SQLite",
+      "tags": "go,open-source,sqlite,queue",
+      "bullets": [
+        {
+          "id": 1,
+          "project_id": 1,
+          "text": "One dependency and no broker to operate, aimed at services that need durable jobs but not Kafka.",
+          "tags": "go,simplicity,operations"
+        },
+        {
+          "id": 2,
+          "project_id": 1,
+          "text": "At-least-once delivery with visibility timeouts, tested against simulated crash and restart.",
+          "tags": "reliability,testing,semantics"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "name": "tfdrift",
+      "url": "github.com/example/tfdrift",
+      "date": "2022",
+      "summary": "CLI that reports Terraform state drift as a readable diff",
+      "tags": "terraform,cli,go,open-source",
+      "bullets": [
+        {
+          "id": 3,
+          "project_id": 2,
+          "text": "Runs in CI and comments the drift summary on the pull request.",
+          "tags": "ci,terraform,developer-experience"
+        }
+      ]
+    }
+  ],
+  "patents": [],
+  "skills": [
+    { "id": 1, "category": "Languages", "name": "Go", "tags": "languages" },
+    { "id": 2, "category": "Languages", "name": "Python", "tags": "languages" },
+    { "id": 3, "category": "Languages", "name": "TypeScript", "tags": "languages" },
+    { "id": 4, "category": "Languages", "name": "SQL", "tags": "languages" },
+    { "id": 5, "category": "Container & Orchestration", "name": "Kubernetes", "tags": "kubernetes,containers" },
+    { "id": 6, "category": "Container & Orchestration", "name": "Docker", "tags": "containers" },
+    { "id": 7, "category": "Container & Orchestration", "name": "Argo Workflows", "tags": "kubernetes,automation" },
+    { "id": 8, "category": "Cloud Platforms", "name": "AWS (EKS, S3, RDS, Lambda)", "tags": "aws,cloud" },
+    { "id": 9, "category": "Cloud Platforms", "name": "GCP (GKE, Cloud Run)", "tags": "gcp,cloud" },
+    { "id": 10, "category": "Infrastructure as Code", "name": "Terraform", "tags": "iac" },
+    { "id": 11, "category": "Infrastructure as Code", "name": "GitOps", "tags": "gitops,ci-cd" },
+    { "id": 12, "category": "Build & CI", "name": "GitHub Actions", "tags": "ci-cd" },
+    { "id": 13, "category": "Observability & Operations", "name": "Prometheus", "tags": "observability,metrics" },
+    { "id": 14, "category": "Observability & Operations", "name": "Grafana", "tags": "observability,dashboards" },
+    { "id": 15, "category": "Observability & Operations", "name": "PagerDuty", "tags": "operations,oncall" },
+    { "id": 16, "category": "Distributed Systems & Storage", "name": "PostgreSQL", "tags": "databases" },
+    { "id": 17, "category": "Distributed Systems & Storage", "name": "Redis", "tags": "caching" },
+    { "id": 18, "category": "Tools", "name": "Git", "tags": "tools" }
+  ]
+}

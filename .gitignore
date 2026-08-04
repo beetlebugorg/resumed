@@ -1,0 +1,16 @@
+# Build output
+bin/
+
+# Local databases. The fact base is personal data — never commit one.
+*.db
+*.db-wal
+*.db-shm
+
+# Generated resumes and cover letters land here by default, and they are
+# personal by definition.
+jobs/
+
+# MCP registration written by `resumed install`; contains local paths.
+.mcp.json
+
+.DS_Store

@@ -1,0 +1,23 @@
+{{define "content"}}
+  <h1>Questions</h1>
+  <p class="sub">
+    Claude asks these while tailoring, when a posting wants something the fact base does not yet cover.
+    Answer here, then ask Claude to fold the answers into your facts.
+  </p>
+
+  <h2>Open{{if .Open}} <span class="muted">({{len .Open}})</span>{{end}}</h2>
+  {{if .Open}}
+    {{range .Open}}
+      {{template "question" .}}
+    {{end}}
+  {{else}}
+    <p class="empty">Nothing waiting on you.</p>
+  {{end}}
+
+  {{if .Answered}}
+    <h2>Answered</h2>
+    {{range .Answered}}
+      {{template "question" .}}
+    {{end}}
+  {{end}}
+{{end}}

@@ -1,0 +1,193 @@
+{{/*
+  Fragments shared by full pages and htmx responses. Each one is rendered
+  standalone by the handler that changes it, so a mutation never re-renders
+  more of the page than it actually touched.
+*/}}
+
+{{define "job-list"}}
+  <div id="job-list">
+  {{if .Jobs}}
+    {{range .Jobs}}
+      <a class="card card-link" href="/jobs/{{.ID}}">
+        <div class="card-head">
+          <span class="card-title">{{.Label}}</span>
+          <span class="status status-{{.Status}}">{{.Status}}</span>
+        </div>
+        <div class="muted" style="font-size:0.85rem; margin-top:0.35rem">
+          {{if .Location}}{{.Location}} · {{end}}added {{shortDate .CreatedAt}}
+        </div>
+        {{with .Description}}
+          <div class="muted" style="font-size:0.85rem; margin-top:0.4rem">{{truncate 160 .}}</div>
+        {{end}}
+      </a>
+    {{end}}
+  {{else}}
+    <p class="empty">
+      {{if .Filter}}No jobs with status “{{.Filter}}”.{{else}}No jobs yet — paste a job URL above to start.{{end}}
+    </p>
+  {{end}}
+  </div>
+{{end}}
+
+
+{{define "status-control"}}
+  <form id="status-control"
+        hx-post="/jobs/{{.Job.ID}}/status"
+        hx-target="#status-control"
+        hx-swap="outerHTML"
+        hx-trigger="change from:find select">
+    <select name="status" aria-label="Job status">
+      {{$cur := .Job.Status}}
+      {{range statuses}}
+        <option value="{{.}}" {{if eq . $cur}}selected{{end}}>{{.}}</option>
+      {{end}}
+    </select>
+  </form>
+{{end}}
+
+
+{{define "notes"}}
+  <div id="notes-list">
+    {{if .Notes}}
+      {{range .Notes}}
+        <div class="note">
+          <div class="note-meta">
+            <span class="{{if eq .Author "claude"}}author-claude{{end}}">{{.Author}}</span>
+            <span>{{shortDate .CreatedAt}}</span>
+            <button class="link"
+                    hx-post="/notes/{{.ID}}/delete"
+                    hx-target="closest .note"
+                    hx-swap="outerHTML"
+                    hx-confirm="Delete this note?">delete</button>
+          </div>
+          <div class="note-body">{{.Body}}</div>
+        </div>
+      {{end}}
+    {{else}}
+      <p class="empty">No notes yet.</p>
+    {{end}}
+  </div>
+{{end}}
+
+
+{{define "versions"}}
+  <div id="versions">
+    {{if .Resumes}}
+      {{range .Resumes}}
+        <div class="version-row">
+          <div>
+            <strong>Current</strong>
+            <span class="muted" style="font-size:0.82rem"> · tailored {{shortDate .CreatedAt}}</span>
+            {{with .Rationale}}<div class="muted" style="font-size:0.85rem; margin-top:0.2rem">{{.}}</div>{{end}}
+          </div>
+          <div class="version-actions">
+            {{if .PDFPath}}<a href="/resumes/{{.ID}}/pdf" target="_blank">PDF</a>{{end}}
+            <a href="/resumes/{{.ID}}/typst" target="_blank">Typst</a>
+            <button class="link"
+                    hx-post="/resumes/{{.ID}}/render"
+                    hx-target="#versions"
+                    hx-swap="outerHTML">re-render</button>
+          </div>
+        </div>
+      {{end}}
+    {{else}}
+      <p class="empty">No resume yet. Ask Claude to tailor one for this job.</p>
+    {{end}}
+  </div>
+{{end}}
+
+
+{{define "cover"}}
+  <div id="cover">
+    {{if .Letter}}
+      <div class="version-row">
+        <div>
+          <strong>Current</strong>
+          <span class="muted" style="font-size:0.82rem"> · written {{shortDate .Letter.UpdatedAt}}</span>
+          {{with .Letter.Rationale}}<div class="muted" style="font-size:0.85rem; margin-top:0.2rem">{{.}}</div>{{end}}
+          {{with $.Error}}<div class="muted" style="font-size:0.85rem; margin-top:0.2rem">render failed: {{.}}</div>{{end}}
+        </div>
+        <div class="version-actions">
+          {{if .Letter.PDFPath}}<a href="/cover-letters/{{.Letter.ID}}/pdf" target="_blank">PDF</a>{{end}}
+          <a href="/cover-letters/{{.Letter.ID}}/typst" target="_blank">Typst</a>
+          <button class="link"
+                  hx-post="/cover-letters/{{.Letter.ID}}/render"
+                  hx-target="#cover"
+                  hx-swap="outerHTML">re-render</button>
+        </div>
+      </div>
+      <details style="margin-top:0.5rem">
+        <summary class="muted" style="font-size:0.85rem; cursor:pointer">Read the letter</summary>
+        <div style="margin-top:0.5rem; white-space:pre-wrap; font-size:0.9rem">{{with .Letter.Greeting}}{{.}}
+
+{{end}}{{.Letter.Body}}{{with .Letter.Closing}}
+
+{{.}}{{end}}</div>
+      </details>
+    {{else}}
+      <p class="empty">No cover letter yet. Ask Claude to write one for this job.</p>
+    {{end}}
+  </div>
+{{end}}
+
+
+{{/* One retirable fact. Retiring keeps the row but stops new resumes using it. */}}
+{{define "fact-row"}}
+  <li class="fact-row{{if .Retired}} retired{{end}}" id="fact-{{.Kind}}-{{.ID}}">
+    <span class="id">{{.ID}}</span>
+    <span class="fact-text">{{.Text}}{{with .Note}} <span class="tag">{{.}}</span>{{end}}</span>
+    <button class="link fact-action"
+            hx-post="/facts/{{.Kind}}/{{.ID}}/{{if .Retired}}restore{{else}}retire{{end}}"
+            hx-target="#fact-{{.Kind}}-{{.ID}}"
+            hx-swap="outerHTML"
+            title="{{if .Retired}}Use this fact again{{else}}Keep this fact but stop using it in new resumes{{end}}"
+        >{{if .Retired}}restore{{else}}retire{{end}}</button>
+  </li>
+{{end}}
+
+
+{{define "question"}}
+  <div class="card question" id="question-{{.Q.ID}}">
+    <div class="question-text">{{.Q.Question}}</div>
+    {{with .Q.Rationale}}<div class="rationale">{{.}}</div>{{end}}
+    {{with .JobLabel}}
+      <div class="muted" style="font-size:0.8rem; margin-bottom:0.6rem">for {{.}}</div>
+    {{end}}
+
+    {{$answered := eq .Q.Status "answered"}}
+    {{if and $answered (not .Editing)}}
+      <div class="answer">{{.Q.Answer}}</div>
+      <div class="answer-meta">
+        <span>answered {{shortDate .Q.AnsweredAt}} — ask Claude to fold this into the fact base</span>
+        <button class="link"
+                hx-get="/questions/{{.Q.ID}}/edit"
+                hx-target="#question-{{.Q.ID}}"
+                hx-swap="outerHTML">edit</button>
+      </div>
+    {{else}}
+      <form hx-post="/questions/{{.Q.ID}}/answer"
+            hx-target="#question-{{.Q.ID}}"
+            hx-swap="outerHTML"
+            class="stack">
+        <input type="hidden" name="return_to" value="{{.ReturnTo}}">
+        <textarea name="answer" rows="4"
+                  placeholder="Your answer — specifics and numbers help most"
+                  required>{{.Q.Answer}}</textarea>
+        <div class="actions">
+          {{if $answered}}
+            <button type="button" class="link"
+                    hx-get="/questions/{{.Q.ID}}"
+                    hx-target="#question-{{.Q.ID}}"
+                    hx-swap="outerHTML">cancel</button>
+          {{else}}
+            <button type="button" class="link"
+                    hx-post="/questions/{{.Q.ID}}/dismiss"
+                    hx-target="#question-{{.Q.ID}}"
+                    hx-swap="outerHTML">dismiss</button>
+          {{end}}
+          <button type="submit" class="primary">{{if $answered}}Save changes{{else}}Save answer{{end}}</button>
+        </div>
+      </form>
+    {{end}}
+  </div>
+{{end}}

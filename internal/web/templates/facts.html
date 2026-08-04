@@ -1,0 +1,92 @@
+{{define "content"}}
+  <h1>Facts</h1>
+  <p class="sub">
+    Everything a tailored resume is allowed to draw from. Claude selects and reorders these by id —
+    it cannot add anything that is not here.
+    <br>
+    <strong>Retire</strong> keeps a fact but stops new resumes using it. Resumes you already generated
+    still render exactly as they were.
+    {{if .RetiredCount}}<br><span class="muted">{{.RetiredCount}} fact(s) retired.</span>{{end}}
+  </p>
+
+  {{with .Profile}}
+    <div class="card">
+      <div class="card-title">{{.Name}}</div>
+      <div class="muted" style="font-size:0.88rem">{{.Location}}</div>
+      {{with .Summary}}<div style="margin-top:0.6rem; font-size:0.9rem">{{.}}</div>{{end}}
+    </div>
+  {{end}}
+
+  {{with .Contacts}}
+    <ul class="fact-list" style="margin-bottom:1rem">
+      {{range .}}<li class="fact-row"><span class="id">{{.ID}}</span> <span class="fact-text">{{.Value}}</span></li>{{end}}
+    </ul>
+  {{end}}
+
+  <h2>Experience</h2>
+  {{range .Experience}}
+    <div class="fact-role{{if .Retired}} retired{{end}}">
+      <div class="fact-role-head">
+        <div>
+          <span class="id">{{.ID}}</span>
+          <strong>{{.Text}}</strong>
+        </div>
+        <div class="version-actions">
+          <span class="muted" style="font-size:0.82rem">{{.Meta}}</span>
+          <button class="link fact-action"
+                  hx-post="/facts/{{.Kind}}/{{.ID}}/{{if .Retired}}restore{{else}}retire{{end}}"
+                  hx-target="closest .fact-role"
+                  hx-swap="none"
+                  hx-on::after-request="window.location.reload()"
+              >{{if .Retired}}restore role{{else}}retire role{{end}}</button>
+        </div>
+      </div>
+      {{with .Sub}}<div class="muted" style="font-size:0.86rem; margin-bottom:0.4rem">{{.}}</div>{{end}}
+      <ul class="fact-list">
+        {{range .Rows}}{{template "fact-row" .}}{{else}}<li class="muted">No bullets recorded.</li>{{end}}
+      </ul>
+    </div>
+  {{else}}
+    <p class="empty">No roles yet. Import a fact base with <code>resumed import</code>.</p>
+  {{end}}
+
+  {{with .Skills}}
+    <h2>Skills</h2>
+    {{range .}}
+      <h3>{{.Category}}</h3>
+      <ul class="fact-list">
+        {{range .Rows}}{{template "fact-row" .}}{{end}}
+      </ul>
+    {{end}}
+  {{end}}
+
+  {{with .Projects}}
+    <h2>Projects</h2>
+    {{range .}}
+      <div class="fact-role{{if .Retired}} retired{{end}}">
+        <div class="fact-role-head">
+          <div><span class="id">{{.ID}}</span> <strong>{{.Text}}</strong></div>
+          <div class="version-actions">
+            <span class="muted" style="font-size:0.82rem">{{.Meta}}</span>
+            <button class="link fact-action"
+                    hx-post="/facts/{{.Kind}}/{{.ID}}/{{if .Retired}}restore{{else}}retire{{end}}"
+                    hx-swap="none"
+                    hx-on::after-request="window.location.reload()"
+                >{{if .Retired}}restore{{else}}retire{{end}}</button>
+          </div>
+        </div>
+        {{with .Sub}}<div class="muted" style="font-size:0.86rem; margin-bottom:0.4rem">{{.}}</div>{{end}}
+        <ul class="fact-list">
+          {{range .Rows}}{{template "fact-row" .}}{{end}}
+        </ul>
+      </div>
+    {{end}}
+  {{end}}
+
+  {{with .Patents}}
+    <h2>Patents</h2>
+    <ul class="fact-list">
+      {{range .}}{{template "fact-row" .}}{{end}}
+    </ul>
+  {{end}}
+{{end}}

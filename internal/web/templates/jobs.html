@@ -1,0 +1,40 @@
+{{define "content"}}
+  <h1>Jobs</h1>
+  <p class="sub">Paste a posting URL and it will be fetched and parsed. Claude tailors resumes against these.</p>
+
+  <form class="card"
+        hx-post="/jobs"
+        hx-indicator="#add-indicator">
+    <div class="row">
+      <input type="url" name="url" placeholder="https://… job posting URL" autocomplete="off">
+      <button type="submit" class="primary" style="flex:0 0 auto">Add job</button>
+    </div>
+    <div id="add-indicator" class="htmx-indicator muted" style="font-size:0.82rem; margin-top:0.5rem">
+      Fetching the posting…
+    </div>
+    <details class="add-manual">
+      <summary>Paste the description instead</summary>
+      <textarea name="description" rows="6"
+                placeholder="Paste the job description here — useful when the posting is behind JavaScript or a login."></textarea>
+    </details>
+  </form>
+
+  <div class="row" style="margin:1.75rem 0 0.75rem; align-items:center">
+    <h2 style="margin:0">Tracked</h2>
+    <select name="status"
+            hx-get="/"
+            hx-target="#job-list"
+            hx-swap="outerHTML"
+            hx-push-url="true"
+            style="flex:0 0 auto; width:auto"
+            aria-label="Filter by status">
+      <option value="">all statuses</option>
+      {{$f := .List.Filter}}
+      {{range statuses}}
+        <option value="{{.}}" {{if eq . $f}}selected{{end}}>{{.}}</option>
+      {{end}}
+    </select>
+  </div>
+
+  {{template "job-list" .List}}
+{{end}}

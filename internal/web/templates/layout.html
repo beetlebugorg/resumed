@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} · resumed</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">resumed</a>
+    <nav>
+      <a href="/" {{if eq .Nav "jobs"}}class="active"{{end}}>Jobs</a>
+      <a href="/questions" {{if eq .Nav "questions"}}class="active"{{end}}>
+        Questions{{if .OpenCount}} <span class="badge">{{.OpenCount}}</span>{{end}}
+      </a>
+      <a href="/facts" {{if eq .Nav "facts"}}class="active"{{end}}>Facts</a>
+    </nav>
+  </header>
+
+  <!-- Server-sent messages land here via the HX-Trigger "flash" event. -->
+  <div id="flash-host" aria-live="polite">
+    {{with .Flash}}<div class="flash">{{.}}</div>{{end}}
+  </div>
+
+  <main>
+    {{block "content" .}}{{end}}
+  </main>
+
+  <script>
+    // A single listener turns any HX-Trigger {"flash": "..."} into a banner.
+    document.body.addEventListener('flash', function (e) {
+      const host = document.getElementById('flash-host');
+      const msg = (e.detail && (e.detail.value || e.detail)) || '';
+      if (!msg) return;
+      host.innerHTML = '<div class="flash"></div>';
+      host.firstChild.textContent = msg;
+    });
+  </script>
+</body>
+</html>
