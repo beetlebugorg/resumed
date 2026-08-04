@@ -22,7 +22,15 @@ type App struct {
 	OutRoot string
 }
 
+// New builds the app. OutRoot is resolved to an absolute path here because the
+// rendered artifact's location is *stored* in the database: a relative --out
+// would record a path that only resolves from the directory the render happened
+// to run in, so `resumed render --out jobs` followed by `resumed serve --out
+// ../jobs` would leave the web UI unable to find its own PDF.
 func New(s *store.Store, outRoot string) *App {
+	if abs, err := filepath.Abs(outRoot); err == nil {
+		outRoot = abs
+	}
 	return &App{Store: s, OutRoot: outRoot}
 }
 

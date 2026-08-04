@@ -16,8 +16,8 @@ func TestCompanyFromURL(t *testing.T) {
 		"https://apply.workable.com/some_startup/j/ABC/":             "Some Startup",
 		// Not an ATS host: guessing an employer from the path would be wrong.
 		"https://www.docker.com/careers/staff-backend-engineer": "",
-		"https://example.com":                                   "",
-		"not a url at all":                                      "",
+		"https://example.com": "",
+		"not a url at all":    "",
 	}
 	for in, want := range cases {
 		if got := companyFromURL(in); got != want {
