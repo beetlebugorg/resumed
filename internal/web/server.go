@@ -8,16 +8,23 @@
 package web
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"fmt"
 	"html/template"
 	"io/fs"
+	"mime"
 	"net/http"
 	"os"
+	"path"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/beetlebugorg/resumed/internal/app"
+	"github.com/beetlebugorg/resumed/internal/render"
 	"github.com/beetlebugorg/resumed/internal/store"
 )
 
@@ -32,6 +39,9 @@ type server struct {
 
 var funcs = template.FuncMap{
 	"statuses": func() []string { return store.JobStatuses },
+	// highlight applies the resume's emphasis terms, so the screen and the PDF
+	// agree about what is bold.
+	"highlight": render.HighlightHTML,
 	"truncate": func(n int, s string) string {
 		if len(s) <= n {
 			return s
@@ -49,7 +59,7 @@ var funcs = template.FuncMap{
 
 // pageFiles lists each full page; every one is parsed with the layout and the
 // partials so it can render fragments inline on a cold load.
-var pageFiles = []string{"jobs.html", "job.html", "questions.html", "facts.html"}
+var pageFiles = []string{"jobs.html", "job.html", "resume.html", "questions.html", "facts.html"}
 
 func newServer(a *app.App) (*server, error) {
 	s := &server{app: a, pages: map[string]*template.Template{}}
@@ -76,6 +86,10 @@ func (s *server) render(w http.ResponseWriter, page string, data any) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	// Every page reflects mutable database state, so a cached copy is always
+	// wrong. Without this a back-navigation can show a job as it looked before
+	// a note or a status change, which reads as data loss.
+	w.Header().Set("Cache-Control", "no-store")
 	if err := t.Execute(w, data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
@@ -137,7 +151,11 @@ func Serve(a *app.App, addr string) error {
 	}
 
 	mux := http.NewServeMux()
-	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(static))))
+	assetHandler, err := staticHandler(static)
+	if err != nil {
+		return fmt.Errorf("static assets: %w", err)
+	}
+	mux.Handle("GET /static/", http.StripPrefix("/static/", assetHandler))
 
 	mux.HandleFunc("GET /{$}", s.listJobs)
 	mux.HandleFunc("POST /jobs", s.addJob)
@@ -157,7 +175,9 @@ func Serve(a *app.App, addr string) error {
 	mux.HandleFunc("GET /facts", s.showFacts)
 	mux.HandleFunc("POST /facts/{kind}/{id}/{verb}", s.setFactRetired)
 
+	mux.HandleFunc("GET /resumes/{id}", s.showResume)
 	mux.HandleFunc("GET /resumes/{id}/pdf", s.resumePDF)
+	mux.HandleFunc("GET /resumes/{id}/sent.pdf", s.resumeSentPDF)
 	mux.HandleFunc("GET /resumes/{id}/typst", s.resumeTypst)
 	mux.HandleFunc("POST /resumes/{id}/render", s.renderResume)
 
@@ -186,7 +206,40 @@ type statusView struct {
 }
 
 type versionsView struct {
-	Resumes []store.Resume
+	Resumes   []store.Resume
+	Doc       *store.Document
+	Highlight []string
+	// Frozen tracks the job status, not the snapshot. A job applied before
+	// snapshots existed is frozen with nothing captured, and the UI must not
+	// offer an action the server will refuse.
+	Frozen bool
+	Status string
+}
+
+// frozen reports whether a job's resume may still be re-rendered.
+func (s *server) frozen(jobID int64) (bool, string) {
+	f, status, err := s.app.Store.ResumeFrozen(jobID)
+	if err != nil {
+		return false, ""
+	}
+	return f, status
+}
+
+// latestDoc assembles a job's current resume for inline display. A job with no
+// resume is the normal empty case, not an error, so both returns are nil.
+func (s *server) latestDoc(resumes []store.Resume) (*store.Document, []string) {
+	if len(resumes) == 0 {
+		return nil, nil
+	}
+	doc, err := s.app.Store.Assemble(resumes[0].ID)
+	if err != nil {
+		return nil, nil
+	}
+	var terms []string
+	if doc.Resume != nil {
+		terms = doc.Resume.Highlight
+	}
+	return doc, terms
 }
 
 // coverView carries a job's letter, or nil when none has been written. Error
@@ -299,6 +352,9 @@ func (s *server) showJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	jobDoc, jobTerms := s.latestDoc(resumes)
+	jobFrozen, jobStatus := s.frozen(id)
+
 	returnTo := fmt.Sprintf("/jobs/%d", id)
 	var qviews []questionView
 	for _, q := range questions {
@@ -315,7 +371,7 @@ func (s *server) showJob(w http.ResponseWriter, r *http.Request) {
 		Status:    statusView{Job: job},
 		Notes:     notesView{JobID: id, Notes: notes},
 		Questions: qviews,
-		Versions:  versionsView{Resumes: resumes},
+		Versions:  versionsView{Resumes: resumes, Doc: jobDoc, Highlight: jobTerms, Frozen: jobFrozen, Status: jobStatus},
 		Cover:     coverView{Letter: letter},
 		OpenCount: s.openCount(),
 		Flash:     r.URL.Query().Get("flash"),
@@ -379,7 +435,9 @@ func (s *server) updateStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid status "+status, http.StatusBadRequest)
 		return
 	}
-	if err := s.app.Store.UpdateJobFields(id, map[string]any{"status": status}); fail(w, err) {
+	// Through the app, not the store: moving into applied freezes a copy of the
+	// resume as sent, and that needs the file copy the app layer does.
+	if err := s.app.SetJobStatus(id, status); fail(w, err) {
 		return
 	}
 	job, err := s.app.Store.GetJob(id)
@@ -750,6 +808,49 @@ func (s *server) factRowByID(kind string, id int64) (factRow, error) {
 
 // ---------------------------------------------------------------- artifacts
 
+// resumePage renders the assembled resume as HTML. It is the reading view: the
+// same selection the PDF is built from, laid out for a screen, so a resume can
+// be reviewed without opening a file.
+type resumePage struct {
+	Title     string
+	Nav       string
+	Doc       *store.Document
+	Highlight []string
+	Frozen    bool
+	Status    string
+	OpenCount int
+	Flash     string
+}
+
+func (s *server) showResume(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if fail(w, err) {
+		return
+	}
+	doc, err := s.app.Store.Assemble(id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	title := doc.Profile.Name
+	if doc.Job != nil {
+		title = doc.Job.Label()
+	}
+	var terms []string
+	if doc.Resume != nil {
+		terms = doc.Resume.Highlight
+	}
+	var frozen bool
+	var status string
+	if doc.Job != nil {
+		frozen, status = s.frozen(doc.Job.ID)
+	}
+	s.render(w, "resume.html", resumePage{
+		Title: title, Nav: "jobs", Doc: doc, Highlight: terms,
+		Frozen: frozen, Status: status, OpenCount: s.openCount(),
+	})
+}
+
 func (s *server) resumePDF(w http.ResponseWriter, r *http.Request) {
 	id, err := pathID(r, "id")
 	if fail(w, err) {
@@ -846,6 +947,32 @@ func (s *server) renderCover(w http.ResponseWriter, r *http.Request) {
 	redirect(w, r, fmt.Sprintf("/jobs/%d", c.JobID))
 }
 
+// resumeSentPDF serves the frozen copy: the document as it went out, not as it
+// would render today.
+func (s *server) resumeSentPDF(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if fail(w, err) {
+		return
+	}
+	res, err := s.app.Store.GetResume(id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if res.SentPDFPath == "" {
+		http.Error(w, "no sent copy was captured for this resume", http.StatusNotFound)
+		return
+	}
+	f, err := os.Open(res.SentPDFPath)
+	if err != nil {
+		http.Error(w, "sent PDF missing on disk: "+err.Error(), http.StatusNotFound)
+		return
+	}
+	defer f.Close()
+	w.Header().Set("Content-Type", "application/pdf")
+	http.ServeContent(w, r, "resume.sent.pdf", time.Time{}, f)
+}
+
 func (s *server) resumeTypst(w http.ResponseWriter, r *http.Request) {
 	id, err := pathID(r, "id")
 	if fail(w, err) {
@@ -885,7 +1012,9 @@ func (s *server) renderResume(w http.ResponseWriter, r *http.Request) {
 		default:
 			w.Header().Set("HX-Trigger", trigger(fmt.Sprintf("rendered v%d", out.Version)))
 		}
-		s.partial(w, "versions", versionsView{Resumes: resumes})
+		rdoc, rterms := s.latestDoc(resumes)
+		rf, rs := s.frozen(res.JobID)
+		s.partial(w, "versions", versionsView{Resumes: resumes, Doc: rdoc, Highlight: rterms, Frozen: rf, Status: rs})
 		return
 	}
 
@@ -922,4 +1051,61 @@ func returnTo(r *http.Request, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// ---------------------------------------------------------------- static assets
+
+// staticHandler serves the embedded assets with a content-derived ETag.
+//
+// This exists because http.FileServer over an embed.FS emits no validator at
+// all: embedded files carry a zero modification time, so there is no
+// Last-Modified, and FileServer does not compute an ETag. With nothing to
+// revalidate against, browsers fall back to heuristic caching and will happily
+// keep serving a stylesheet from a previous build — the UI silently stops
+// matching the binary, which is maddening to debug because the server is
+// serving the right bytes the whole time.
+//
+// Hashing each asset at startup fixes it without giving up caching. "no-cache"
+// does not mean "do not cache"; it means "revalidate before use", and the ETag
+// makes that revalidation a 304 with no body.
+func staticHandler(fsys fs.FS) (http.Handler, error) {
+	type asset struct {
+		body  []byte
+		etag  string
+		ctype string
+	}
+	files := map[string]asset{}
+	err := fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		b, err := fs.ReadFile(fsys, p)
+		if err != nil {
+			return err
+		}
+		sum := sha256.Sum256(b)
+		ctype := mime.TypeByExtension(path.Ext(p))
+		if ctype == "" {
+			ctype = http.DetectContentType(b)
+		}
+		files[p] = asset{body: b, etag: `"` + hex.EncodeToString(sum[:8]) + `"`, ctype: ctype}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		a, ok := files[strings.TrimPrefix(r.URL.Path, "/")]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("ETag", a.etag)
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Content-Type", a.ctype)
+		// ServeContent handles If-None-Match and range requests. The zero time
+		// suppresses Last-Modified, which is correct: we have no real one.
+		http.ServeContent(w, r, path.Base(r.URL.Path), time.Time{}, bytes.NewReader(a.body))
+	}), nil
 }

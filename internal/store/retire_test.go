@@ -49,7 +49,7 @@ func TestRetiredFactStillRendersExistingResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resume, err := s.CreateResume(jobID, "Summary.", "", []ResumeItem{
+	resume, err := s.CreateResume(jobID, "Summary.", "", nil, []ResumeItem{
 		{Kind: KindRole, RefID: roleID, Position: 1},
 		{Kind: KindBullet, RefID: keepID, Position: 2},
 		{Kind: KindBullet, RefID: dropID, Position: 3},
@@ -122,7 +122,7 @@ func TestRetiredFactRejectedByNewResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = s.CreateResume(jobID, "Summary.", "", []ResumeItem{
+	_, err = s.CreateResume(jobID, "Summary.", "", nil, []ResumeItem{
 		{Kind: KindRole, RefID: roleID, Position: 1},
 		{Kind: KindBullet, RefID: dropID, Position: 2},
 	})
@@ -164,10 +164,10 @@ func TestOneResumePerJob(t *testing.T) {
 		{Kind: KindRole, RefID: roleID, Position: 1},
 		{Kind: KindBullet, RefID: keepID, Position: 2},
 	}
-	if _, err := s.CreateResume(jobID, "First.", "", items); err != nil {
+	if _, err := s.CreateResume(jobID, "First.", "", nil, items); err != nil {
 		t.Fatal(err)
 	}
-	second, err := s.CreateResume(jobID, "Second.", "", items)
+	second, err := s.CreateResume(jobID, "Second.", "", nil, items)
 	if err != nil {
 		t.Fatal(err)
 	}

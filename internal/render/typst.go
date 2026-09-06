@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -81,16 +82,153 @@ var contentEscapes = strings.NewReplacer(
 )
 
 // esc escapes text for Typst content mode.
-func esc(s string) string {
-	s = contentEscapes.Replace(strings.TrimSpace(s))
-	// A leading -, +, /, or = starts a list or heading; neutralise it.
-	if s != "" {
-		switch s[0] {
-		case '-', '+', '/', '=':
-			s = `\` + s
+func esc(s string) string { return escTerms(s, nil) }
+
+// escTerms escapes text for Typst content mode, wrapping every occurrence of a
+// highlight term in #strong[...]. The escaping is applied to the term text too,
+// so emphasis can never be a route around contentEscapes: a term still cannot
+// introduce markup, only bold text that was already there.
+func escTerms(s string, terms []string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	spans := highlightSpans(s, terms)
+
+	var out string
+	if len(spans) == 0 {
+		out = contentEscapes.Replace(s)
+	} else {
+		var b strings.Builder
+		prev := 0
+		for _, sp := range spans {
+			b.WriteString(contentEscapes.Replace(s[prev:sp.lo]))
+			// A short term is wrapped in a box so it cannot break across lines.
+			// Typesetters break at an existing hyphen, and PDF text extractors
+			// then drop it: "AWS Well-Architected Framework" comes back out as
+			// "WellArchitected", which an ATS matching the exact phrase misses.
+			// Highlight terms are precisely the words the author declared worth
+			// matching, so they are the right set to protect. Long phrases are
+			// emphasis rather than keywords and must stay breakable, or they
+			// would overrun the line.
+			boxed := sp.hi-sp.lo <= unbreakableLimit
+			if boxed {
+				b.WriteString("#box[")
+			}
+			b.WriteString("#strong[")
+			b.WriteString(contentEscapes.Replace(s[sp.lo:sp.hi]))
+			b.WriteString("]")
+			if boxed {
+				b.WriteString("]")
+			}
+			prev = sp.hi
+		}
+		b.WriteString(contentEscapes.Replace(s[prev:]))
+		out = b.String()
+	}
+
+	// A leading -, +, /, or = starts a list or heading; neutralise it. Skipped
+	// when the first character is inside a highlight span, because there the
+	// text is preceded by "#strong[" and is no longer at the start of a line —
+	// prefixing a backslash would escape the # and print it literally.
+	if len(spans) > 0 && spans[0].lo == 0 {
+		return out
+	}
+	switch s[0] {
+	case '-', '+', '/', '=':
+		out = `\` + out
+	}
+	return out
+}
+
+// unbreakableLimit is the longest highlight term kept on one line. Body lines
+// hold roughly 95 characters, so 40 leaves room for a boxed term to move to the
+// next line rather than overflow the page.
+const unbreakableLimit = 40
+
+// span is a half-open byte range of s to render bold.
+type span struct{ lo, hi int }
+
+// highlightSpans finds the non-overlapping ranges of s matching any term.
+// Matching is case-insensitive over ASCII and respects word boundaries, so
+// "AWS" does not match inside "AWSome" while "$300,000 a month" — which begins
+// with punctuation — still matches. Longer terms are matched first so that
+// "Google Cloud" wins over a bare "Cloud" covering the same text.
+func highlightSpans(s string, terms []string) []span {
+	if s == "" || len(terms) == 0 {
+		return nil
+	}
+	ordered := make([]string, 0, len(terms))
+	for _, t := range terms {
+		if t = strings.TrimSpace(t); t != "" {
+			ordered = append(ordered, t)
 		}
 	}
-	return s
+	sort.SliceStable(ordered, func(i, j int) bool { return len(ordered[i]) > len(ordered[j]) })
+
+	hay := asciiLower(s)
+	taken := make([]bool, len(s))
+	var spans []span
+	for _, t := range ordered {
+		needle := asciiLower(t)
+		for from := 0; from+len(needle) <= len(hay); {
+			i := strings.Index(hay[from:], needle)
+			if i < 0 {
+				break
+			}
+			lo := from + i
+			hi := lo + len(needle)
+			from = lo + 1
+			if !wordBounded(s, lo, hi) || overlaps(taken, lo, hi) {
+				continue
+			}
+			for k := lo; k < hi; k++ {
+				taken[k] = true
+			}
+			spans = append(spans, span{lo, hi})
+		}
+	}
+	sort.Slice(spans, func(i, j int) bool { return spans[i].lo < spans[j].lo })
+	return spans
+}
+
+// asciiLower lowercases ASCII letters only. strings.ToLower is unusable here
+// because a few Unicode characters change byte length when folded, which would
+// desynchronise offsets between the haystack and the original string.
+func asciiLower(s string) string {
+	b := []byte(s)
+	for i := range b {
+		if b[i] >= 'A' && b[i] <= 'Z' {
+			b[i] += 'a' - 'A'
+		}
+	}
+	return string(b)
+}
+
+func isWordByte(b byte) bool {
+	return b >= '0' && b <= '9' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
+}
+
+// wordBounded reports whether s[lo:hi] sits on word boundaries. The check only
+// applies on a side where the match's own edge is a word character: a term
+// ending in "." or starting with "$" needs no boundary there.
+func wordBounded(s string, lo, hi int) bool {
+	if lo > 0 && isWordByte(s[lo]) && isWordByte(s[lo-1]) {
+		return false
+	}
+	if hi < len(s) && isWordByte(s[hi-1]) && isWordByte(s[hi]) {
+		return false
+	}
+	return true
+}
+
+func overlaps(taken []bool, lo, hi int) bool {
+	for k := lo; k < hi; k++ {
+		if taken[k] {
+			return true
+		}
+	}
+	return false
 }
 
 // labelForComment flattens a job label for the generated header comment. The
@@ -113,6 +251,12 @@ func Typst(doc *store.Document) string {
 	}
 	fmt.Fprintf(&b, "\n#import %s: *\n\n", quote(TemplateName))
 
+	// Terms this posting wants emphasised. Empty for a full fact-base dump.
+	var hi []string
+	if doc.Resume != nil {
+		hi = doc.Resume.Highlight
+	}
+
 	// Header.
 	b.WriteString("#show: resume.with(\n")
 	fmt.Fprintf(&b, "  author: %s,\n", quote(doc.Profile.Name))
@@ -129,7 +273,7 @@ func Typst(doc *store.Document) string {
 
 	if s := strings.TrimSpace(doc.Summary); s != "" {
 		b.WriteString("= Summary\n\n")
-		b.WriteString(esc(s))
+		b.WriteString(escTerms(s, hi))
 		b.WriteString("\n\n")
 	}
 
@@ -146,12 +290,12 @@ func Typst(doc *store.Document) string {
 				fmt.Fprintf(&b, "  date: %s,\n", quote(d))
 			}
 			if r.Summary != "" {
-				fmt.Fprintf(&b, "  summary: %s,\n", quote(r.Summary))
+				fmt.Fprintf(&b, "  summary: [%s],\n", escTerms(r.Summary, hi))
 			}
 			if len(r.Bullets) > 0 {
 				b.WriteString("  details: [\n")
 				for _, bl := range r.Bullets {
-					fmt.Fprintf(&b, "    - %s\n", esc(bl.Text))
+					fmt.Fprintf(&b, "    - %s\n", escTerms(bl.Text, hi))
 				}
 				b.WriteString("  ],\n")
 			}
@@ -165,6 +309,10 @@ func Typst(doc *store.Document) string {
 		for _, g := range doc.SkillGroups {
 			fmt.Fprintf(&b, "  (%s, (\n", quote(g.Category))
 			for _, n := range g.Names {
+				// Deliberately not highlighted. skills() already renders the
+				// category label bold, so a bold skill sitting next to it reads
+				// as one long bold run and the emphasis disappears — worse than
+				// no emphasis at all.
 				fmt.Fprintf(&b, "    [%s],\n", esc(n))
 			}
 			b.WriteString("  )),\n")
@@ -180,16 +328,18 @@ func Typst(doc *store.Document) string {
 			if p.URL != "" {
 				fmt.Fprintf(&b, "  url: %s,\n", quote(p.URL))
 			}
-			if p.Date != "" {
-				fmt.Fprintf(&b, "  date: %s,\n", quote(p.Date))
-			}
+			// Project dates are deliberately not emitted. The fact base only
+			// knows them to the year ("2009 - Present"), and ATS guidance
+			// treats a year-only range as unsafe. Inventing months to satisfy
+			// the format would be a lie, so the date is dropped instead. Real
+			// employment dates, which are known to the month, still render.
 			if p.Summary != "" {
-				fmt.Fprintf(&b, "  summary: %s,\n", quote(p.Summary))
+				fmt.Fprintf(&b, "  summary: [%s],\n", escTerms(p.Summary, hi))
 			}
 			if len(p.Bullets) > 0 {
 				b.WriteString("  details: [\n")
 				for _, bl := range p.Bullets {
-					fmt.Fprintf(&b, "    - %s\n", esc(bl.Text))
+					fmt.Fprintf(&b, "    - %s\n", escTerms(bl.Text, hi))
 				}
 				b.WriteString("  ],\n")
 			}

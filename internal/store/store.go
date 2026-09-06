@@ -65,6 +65,29 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	// Emphasis terms arrived after the resumes table did.
+	if has, err := hasColumn(db, "resumes", "highlight"); err != nil {
+		return err
+	} else if !has {
+		if _, err := db.Exec(`ALTER TABLE resumes ADD COLUMN highlight TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add highlight to resumes: %w", err)
+		}
+	}
+
+	// The sent snapshot arrived after the resumes table did.
+	for _, col := range []string{"sent_typst", "sent_pdf_path", "sent_at"} {
+		has, err := hasColumn(db, "resumes", col)
+		if err != nil {
+			return err
+		}
+		if has {
+			continue
+		}
+		if _, err := db.Exec(`ALTER TABLE resumes ADD COLUMN ` + col + ` TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add %s to resumes: %w", col, err)
+		}
+	}
+
 	// Collapse to one resume per job. Earlier builds kept a version chain; the
 	// model is now "the current resume for this job", so anything older than
 	// the newest version per job is dropped (resume_items cascade). Without
@@ -613,8 +636,11 @@ func (s *Store) AddJobNote(jobID int64, body, author string) (int64, error) {
 	return res.LastInsertId()
 }
 
+// ListJobNotes returns a job's notes newest first. The most recent note is the
+// one worth reading — an interview outcome or a change of plan supersedes what
+// came before — so it leads rather than sitting at the bottom of a long list.
 func (s *Store) ListJobNotes(jobID int64) ([]JobNote, error) {
-	rows, err := s.db.Query(`SELECT id, job_id, body, author, created_at FROM job_notes WHERE job_id = ? ORDER BY id`, jobID)
+	rows, err := s.db.Query(`SELECT id, job_id, body, author, created_at FROM job_notes WHERE job_id = ? ORDER BY id DESC`, jobID)
 	if err != nil {
 		return nil, err
 	}
@@ -697,12 +723,75 @@ func (s *Store) SetQuestionStatus(id int64, status string) error {
 
 // ------------------------------------------------------------------- resumes
 
+// ResumeFrozen reports whether a job's resume may still be changed, and the
+// status that decided it. Freezing is keyed on the job rather than on the
+// snapshot so the rule reads the way a person would say it: once you have
+// applied, the resume you applied with stops moving.
+func (s *Store) ResumeFrozen(jobID int64) (bool, string, error) {
+	var status string
+	err := s.db.QueryRow(`SELECT status FROM jobs WHERE id = ?`, jobID).Scan(&status)
+	if err == sql.ErrNoRows {
+		return false, "", fmt.Errorf("job %d not found", jobID)
+	}
+	if err != nil {
+		return false, "", err
+	}
+	return IsSentStatus(status), status, nil
+}
+
+// MarkResumeSent freezes a copy of what was sent. It is deliberately
+// write-once: a second call on the same resume is a no-op, so moving a job
+// applied -> interviewing -> offer cannot overwrite the original with a later
+// render.
+func (s *Store) MarkResumeSent(resumeID int64, typst, pdfPath string) error {
+	_, err := s.db.Exec(`
+		UPDATE resumes
+		   SET sent_typst = ?, sent_pdf_path = ?, sent_at = datetime('now')
+		 WHERE id = ? AND sent_at = ''`, typst, pdfPath, resumeID)
+	return err
+}
+
+// joinHighlight and splitHighlight move emphasis terms between the []string the
+// rest of the program uses and the newline-separated column. Blank entries are
+// dropped on the way in so an empty list and a list of empty strings store the
+// same way.
+func joinHighlight(terms []string) string {
+	var keep []string
+	for _, t := range terms {
+		if t = strings.TrimSpace(t); t != "" {
+			keep = append(keep, t)
+		}
+	}
+	return strings.Join(keep, "\n")
+}
+
+func splitHighlight(s string) []string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	var out []string
+	for _, t := range strings.Split(s, "\n") {
+		if t = strings.TrimSpace(t); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
 // CreateResume writes the tailored resume for a job, replacing whatever was
 // there. Only the current resume is kept: re-tailoring supersedes the previous
 // attempt rather than accumulating versions. Items must reference existing,
 // non-retired fact rows; validation happens here so a bad tailoring call fails
 // loudly instead of silently producing an empty resume.
-func (s *Store) CreateResume(jobID int64, summary, rationale string, items []ResumeItem) (*Resume, error) {
+func (s *Store) CreateResume(jobID int64, summary, rationale string, highlight []string, items []ResumeItem) (*Resume, error) {
+	frozen, status, err := s.ResumeFrozen(jobID)
+	if err != nil {
+		return nil, err
+	}
+	if frozen {
+		return nil, fmt.Errorf("job %d is %s: its resume is frozen because a copy is already out with an employer. Move the job back to tailoring to replace it", jobID, status)
+	}
+
 	tx, err := s.db.Begin()
 	if err != nil {
 		return nil, err
@@ -715,8 +804,8 @@ func (s *Store) CreateResume(jobID int64, summary, rationale string, items []Res
 	}
 	const version = 1
 
-	res, err := tx.Exec(`INSERT INTO resumes (job_id, version, summary, rationale) VALUES (?, ?, ?, ?)`,
-		jobID, version, summary, rationale)
+	res, err := tx.Exec(`INSERT INTO resumes (job_id, version, summary, rationale, highlight) VALUES (?, ?, ?, ?, ?)`,
+		jobID, version, summary, rationale, joinHighlight(highlight))
 	if err != nil {
 		return nil, err
 	}
@@ -786,22 +875,27 @@ func validateItemRef(tx *sql.Tx, it ResumeItem) error {
 
 func (s *Store) GetResume(id int64) (*Resume, error) {
 	var r Resume
+	var hl string
 	err := s.db.QueryRow(`
-		SELECT id, job_id, version, summary, rationale, typst, pdf_path, created_at
+		SELECT id, job_id, version, summary, rationale, highlight, typst, pdf_path, created_at,
+		       sent_typst, sent_pdf_path, sent_at
 		FROM resumes WHERE id = ?`, id).
-		Scan(&r.ID, &r.JobID, &r.Version, &r.Summary, &r.Rationale, &r.Typst, &r.PDFPath, &r.CreatedAt)
+		Scan(&r.ID, &r.JobID, &r.Version, &r.Summary, &r.Rationale, &hl, &r.Typst, &r.PDFPath, &r.CreatedAt,
+			&r.SentTypst, &r.SentPDFPath, &r.SentAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("resume %d not found", id)
 	}
 	if err != nil {
 		return nil, err
 	}
+	r.Highlight = splitHighlight(hl)
 	return &r, nil
 }
 
 func (s *Store) ListResumes(jobID int64) ([]Resume, error) {
 	rows, err := s.db.Query(`
-		SELECT id, job_id, version, summary, rationale, typst, pdf_path, created_at
+		SELECT id, job_id, version, summary, rationale, highlight, typst, pdf_path, created_at,
+		       sent_typst, sent_pdf_path, sent_at
 		FROM resumes WHERE job_id = ? ORDER BY version DESC`, jobID)
 	if err != nil {
 		return nil, err
@@ -810,10 +904,13 @@ func (s *Store) ListResumes(jobID int64) ([]Resume, error) {
 	var out []Resume
 	for rows.Next() {
 		var r Resume
+		var hl string
 		if err := rows.Scan(&r.ID, &r.JobID, &r.Version, &r.Summary, &r.Rationale,
-			&r.Typst, &r.PDFPath, &r.CreatedAt); err != nil {
+			&hl, &r.Typst, &r.PDFPath, &r.CreatedAt,
+			&r.SentTypst, &r.SentPDFPath, &r.SentAt); err != nil {
 			return nil, err
 		}
+		r.Highlight = splitHighlight(hl)
 		out = append(out, r)
 	}
 	return out, rows.Err()

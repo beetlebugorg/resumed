@@ -159,9 +159,17 @@ type Resume struct {
 	Version   int    `json:"version"`
 	Summary   string `json:"summary,omitempty"`
 	Rationale string `json:"rationale,omitempty"`
-	Typst     string `json:"-"`
-	PDFPath   string `json:"pdf_path,omitempty"`
-	CreatedAt string `json:"created_at"`
+	// Highlight lists terms the renderer bolds wherever they appear in the
+	// summary and bullet text. Stored newline-separated.
+	Highlight []string `json:"highlight,omitempty"`
+	Typst     string   `json:"-"`
+	// The frozen copy of what was sent. Empty until the job reaches a status
+	// that means an application is out in the world.
+	SentTypst   string `json:"-"`
+	SentPDFPath string `json:"sent_pdf_path,omitempty"`
+	SentAt      string `json:"sent_at,omitempty"`
+	PDFPath     string `json:"pdf_path,omitempty"`
+	CreatedAt   string `json:"created_at"`
 }
 
 // CoverLetter is the prose companion to a tailored resume. Unlike a Resume it
@@ -175,10 +183,18 @@ type CoverLetter struct {
 	Body      string `json:"body"`
 	Closing   string `json:"closing,omitempty"`
 	Rationale string `json:"rationale,omitempty"`
-	Typst     string `json:"-"`
-	PDFPath   string `json:"pdf_path,omitempty"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
+	// Highlight lists terms the renderer bolds wherever they appear in the
+	// summary and bullet text. Stored newline-separated.
+	Highlight []string `json:"highlight,omitempty"`
+	Typst     string   `json:"-"`
+	// The frozen copy of what was sent. Empty until the job reaches a status
+	// that means an application is out in the world.
+	SentTypst   string `json:"-"`
+	SentPDFPath string `json:"sent_pdf_path,omitempty"`
+	SentAt      string `json:"sent_at,omitempty"`
+	PDFPath     string `json:"pdf_path,omitempty"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
 }
 
 // Paragraphs splits the stored body on blank lines, which is how the letter is
@@ -215,6 +231,19 @@ const (
 
 // Job statuses, in pipeline order.
 var JobStatuses = []string{"saved", "tailoring", "applied", "interviewing", "offer", "rejected", "closed"}
+
+// sentStatuses are the states in which an application is live: someone outside
+// holds a copy of the resume. A resume is frozen in these states so the file on
+// disk keeps matching the file they have. "rejected" and "closed" are absent
+// deliberately — once an application is over, re-tailoring for a second attempt
+// is reasonable, and the sent snapshot survives regardless.
+var sentStatuses = map[string]bool{"applied": true, "interviewing": true, "offer": true}
+
+// IsSentStatus reports whether a job status means the resume has gone out.
+func IsSentStatus(status string) bool { return sentStatuses[status] }
+
+// Sent reports whether this resume has a frozen copy of what was sent.
+func (r Resume) Sent() bool { return r.SentAt != "" }
 
 // Retired reports whether a fact has been retired from new tailoring. The row
 // is kept so previously generated resumes still render.

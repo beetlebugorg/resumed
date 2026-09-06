@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"unicode"
@@ -146,6 +148,20 @@ func (a *App) Render(resumeID int64) (*RenderResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Re-rendering a sent resume would overwrite the file an employer is
+	// holding. The fact base and the template move on; the sent document must
+	// not. This is the guard that makes "cannot change after applied" true in
+	// practice, because most drift arrives through a re-render rather than
+	// through a deliberate edit.
+	if doc.Job != nil {
+		frozen, status, err := a.Store.ResumeFrozen(doc.Job.ID)
+		if err != nil {
+			return nil, err
+		}
+		if frozen {
+			return nil, fmt.Errorf("job %d is %s: its resume is frozen, and re-rendering would replace the copy already sent. Move the job back to tailoring to change it", doc.Job.ID, status)
+		}
+	}
 	src := render.Typst(doc)
 
 	// One resume per job, so the filename is stable: re-tailoring overwrites in
@@ -228,4 +244,66 @@ func (a *App) RenderCover(coverID int64) (*CoverRenderResult, error) {
 		return out, err
 	}
 	return out, nil
+}
+
+// SetJobStatus changes a job's status and, on the move into a status that means
+// an application is out, freezes a copy of the resume as sent.
+//
+// The snapshot is taken here rather than in the store because it copies a file:
+// the live PDF is overwritten in place by later renders, so preserving the
+// bytes needs a second file on disk, not just a database row.
+func (a *App) SetJobStatus(jobID int64, status string) error {
+	before, err := a.Store.GetJob(jobID)
+	if err != nil {
+		return err
+	}
+	if err := a.Store.UpdateJobFields(jobID, map[string]any{"status": status}); err != nil {
+		return err
+	}
+	// Only on the transition in. Re-saving "applied" over "applied" must not
+	// re-snapshot, or a render slipped in between would become the record.
+	if !store.IsSentStatus(status) || store.IsSentStatus(before.Status) {
+		return nil
+	}
+	return a.SnapshotSentResume(jobID)
+}
+
+// SnapshotSentResume freezes the current resume for a job as the sent copy. It
+// is safe to call when there is no resume, and safe to call twice: the store
+// write is a no-op once a snapshot exists.
+func (a *App) SnapshotSentResume(jobID int64) error {
+	res, err := a.Store.LatestResume(jobID)
+	if err != nil || res == nil || res.Sent() {
+		return err
+	}
+	sentPDF := ""
+	if res.PDFPath != "" {
+		dir := filepath.Dir(res.PDFPath)
+		base := strings.TrimSuffix(filepath.Base(res.PDFPath), filepath.Ext(res.PDFPath))
+		sentPDF = filepath.Join(dir, base+".sent.pdf")
+		if err := copyFile(res.PDFPath, sentPDF); err != nil {
+			// A missing PDF should not block the status change; the Typst
+			// source is the more important half of the record and is stored
+			// in the database either way.
+			sentPDF = ""
+		}
+	}
+	return a.Store.MarkResumeSent(res.ID, res.Typst, sentPDF)
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		return err
+	}
+	return out.Close()
 }

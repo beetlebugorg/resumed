@@ -149,7 +149,20 @@ CREATE TABLE IF NOT EXISTS resumes (
     version    INTEGER NOT NULL,
     summary    TEXT NOT NULL DEFAULT '', -- tailored summary paragraph
     rationale  TEXT NOT NULL DEFAULT '', -- why these facts were chosen
+    -- Terms to bold in the rendered document, one per line. Emphasis is a
+    -- tailoring decision, not a fact: the same bullet may want GKE bold for one
+    -- posting and Terraform bold for the next, so this lives on the resume and
+    -- never touches the fact text.
+    highlight  TEXT NOT NULL DEFAULT '',
     typst      TEXT NOT NULL DEFAULT '',
+    -- What was actually sent. Captured when the job moves to applied and never
+    -- written again. The live typst/pdf_path above track the current fact base
+    -- and template; these do not. A fact reworded or a template changed after
+    -- an application would otherwise silently rewrite history, and the one
+    -- document you must be able to reproduce is the one an employer is holding.
+    sent_typst    TEXT NOT NULL DEFAULT '',
+    sent_pdf_path TEXT NOT NULL DEFAULT '',
+    sent_at       TEXT NOT NULL DEFAULT '',
     pdf_path   TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE (job_id, version)

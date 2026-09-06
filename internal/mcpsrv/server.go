@@ -391,6 +391,14 @@ func registerJobTools(s *mcp.Server, a *app.App) {
 				fields[k] = v
 			}
 		}
+		// Status goes through the app, which freezes the sent copy on the move
+		// into applied; the rest are plain field writes.
+		if status, ok := fields["status"].(string); ok {
+			delete(fields, "status")
+			if err := a.SetJobStatus(in.JobID, status); err != nil {
+				return fail[store.Job]("update job status: %w", err)
+			}
+		}
 		if err := a.Store.UpdateJobFields(in.JobID, fields); err != nil {
 			return fail[store.Job]("update job: %w", err)
 		}
@@ -530,6 +538,7 @@ type SaveResumeInput struct {
 	Projects  []TailoredProject `json:"projects,omitempty"`
 	SkillIDs  []int64           `json:"skill_ids,omitempty" jsonschema:"skill ids to include, ordered; they are grouped by their category automatically"`
 	PatentIDs []int64           `json:"patent_ids,omitempty"`
+	Highlight []string          `json:"highlight,omitempty" jsonschema:"terms to bold wherever they appear in the summary, bullets, and project text (skills are left alone, since their category labels are already bold): the handful of things this posting most wants to see. Matching is case-insensitive and respects word boundaries. Emphasis is per-resume, so the same fact can bold different terms for different postings. Keep the list short; bolding half the page emphasises nothing"`
 }
 
 type SaveResumeOutput struct {
@@ -625,7 +634,7 @@ func registerResumeTools(s *mcp.Server, a *app.App) {
 			items = append(items, store.ResumeItem{Kind: store.KindPatent, RefID: id, Position: next()})
 		}
 
-		resume, err := a.Store.CreateResume(in.JobID, in.Summary, in.Rationale, items)
+		resume, err := a.Store.CreateResume(in.JobID, in.Summary, in.Rationale, in.Highlight, items)
 		if err != nil {
 			return fail[SaveResumeOutput]("save resume: %w", err)
 		}

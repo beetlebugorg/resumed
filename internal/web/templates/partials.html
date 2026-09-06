@@ -72,23 +72,47 @@
 
 {{define "versions"}}
   <div id="versions">
-    {{if .Resumes}}
-      {{range .Resumes}}
-        <div class="version-row">
-          <div>
-            <strong>Current</strong>
-            <span class="muted" style="font-size:0.82rem"> · tailored {{shortDate .CreatedAt}}</span>
-            {{with .Rationale}}<div class="muted" style="font-size:0.85rem; margin-top:0.2rem">{{.}}</div>{{end}}
-          </div>
-          <div class="version-actions">
-            {{if .PDFPath}}<a href="/resumes/{{.ID}}/pdf" target="_blank">PDF</a>{{end}}
-            <a href="/resumes/{{.ID}}/typst" target="_blank">Typst</a>
-            <button class="link"
-                    hx-post="/resumes/{{.ID}}/render"
-                    hx-target="#versions"
-                    hx-swap="outerHTML">re-render</button>
-          </div>
+    {{if .Doc}}
+      {{/* The resume itself, inline. A link would make reviewing it a separate
+           trip; the whole point of the job page is to see the posting, the
+           notes, and the document you are sending in one place. */}}
+      <div class="doc-bar">
+        <div class="doc-bar-left">
+          {{with .Doc.Resume}}
+            <span class="muted">Tailored {{shortDate .CreatedAt}}</span>
+            {{if $.Frozen}}
+              {{/* The page below renders from today's fact base and template.
+                   The copy the employer holds was frozen when the job was
+                   marked applied, so say so rather than implying they match. */}}
+              <span class="frozen-badge" title="This job has an application out, so its resume is frozen">
+                {{if .Sent}}sent {{shortDate .SentAt}}{{else}}frozen &mdash; {{$.Status}}{{end}}
+              </span>
+            {{end}}
+          {{end}}
         </div>
+        <div class="doc-bar-actions">
+          {{with .Doc.Resume}}
+            {{if .PDFPath}}<a class="btn primary" href="/resumes/{{.ID}}/pdf" target="_blank">PDF</a>{{end}}
+            {{if .SentPDFPath}}<a class="btn" href="/resumes/{{.ID}}/sent.pdf" target="_blank">PDF as sent</a>{{end}}
+            <a class="btn" href="/resumes/{{.ID}}/typst" target="_blank">Typst</a>
+            <a class="btn" href="/resumes/{{.ID}}">Full page</a>
+            {{if not $.Frozen}}
+              <button class="btn"
+                      hx-post="/resumes/{{.ID}}/render"
+                      hx-target="#versions"
+                      hx-swap="outerHTML">Re-render</button>
+            {{end}}
+          {{end}}
+        </div>
+      </div>
+      {{template "resume-doc" .}}
+      {{with .Doc.Resume}}
+        {{with .Rationale}}
+          <details class="rationale">
+            <summary>Why this material was chosen</summary>
+            <div>{{.}}</div>
+          </details>
+        {{end}}
       {{end}}
     {{else}}
       <p class="empty">No resume yet. Ask Claude to tailor one for this job.</p>
@@ -190,4 +214,100 @@
       </form>
     {{end}}
   </div>
+{{end}}
+
+
+{{/* The rendered resume, shown wherever a resume is shown. Takes any value with
+     .Doc and .Highlight. Shared so the job page and the standalone view can
+     never drift apart — and so both match the PDF. */}}
+{{define "resume-doc"}}
+{{$hi := .Highlight}}
+<article class="doc">
+  <header class="doc-head">
+    <h1>{{.Doc.Profile.Name}}</h1>
+    {{if .Doc.Contacts}}
+      <p class="doc-contacts">
+        {{range $i, $c := .Doc.Contacts}}{{if $i}} <span class="sep">|</span> {{end}}{{if $c.URL}}<a href="{{$c.URL}}">{{$c.Value}}</a>{{else}}{{$c.Value}}{{end}}{{end}}
+      </p>
+    {{end}}
+    {{with .Doc.Profile.Location}}<p class="doc-location">{{.}}</p>{{end}}
+  </header>
+
+  {{with .Doc.Summary}}
+    <section>
+      <h2>Summary</h2>
+      <p>{{highlight . $hi}}</p>
+    </section>
+  {{end}}
+
+  {{if .Doc.Roles}}
+    <section>
+      <h2>Experience</h2>
+      {{range .Doc.Roles}}
+        <div class="entry">
+          <div class="entry-head">
+            <span class="entry-org">{{.Company}}</span>
+            <span class="entry-when">
+              {{with .Location}}{{.}}{{end}}{{if and .Location .Dates}} · {{end}}{{.Dates}}
+            </span>
+          </div>
+          <div class="entry-title">{{.Title}}</div>
+          {{with .Summary}}<div class="entry-sub">{{highlight . $hi}}</div>{{end}}
+          {{if .Bullets}}
+            <ul>{{range .Bullets}}<li>{{highlight .Text $hi}}</li>{{end}}</ul>
+          {{end}}
+        </div>
+      {{end}}
+    </section>
+  {{end}}
+
+  {{if .Doc.SkillGroups}}
+    <section>
+      <h2>Skills</h2>
+      {{/* Label and values on one line, as the PDF sets them. dt/dd are block
+           elements and broke after every category, which read as a list of
+           headings with orphaned values. */}}
+      <div class="skills">
+        {{range .Doc.SkillGroups}}
+          <p><strong>{{.Category}}:</strong> {{range $i, $n := .Names}}{{if $i}}, {{end}}{{$n}}{{end}}</p>
+        {{end}}
+      </div>
+    </section>
+  {{end}}
+
+  {{if .Doc.Projects}}
+    <section>
+      <h2>Projects</h2>
+      {{range .Doc.Projects}}
+        <div class="entry">
+          <div class="entry-title">
+            {{.Name}}{{with .Summary}}: <span class="normal">{{highlight . $hi}}</span>{{end}}
+          </div>
+          {{with .URL}}
+            <div class="entry-link"><a href="https://{{.}}" target="_blank">{{.}}</a></div>
+          {{end}}
+          {{if .Bullets}}
+            <ul>{{range .Bullets}}<li>{{highlight .Text $hi}}</li>{{end}}</ul>
+          {{end}}
+        </div>
+      {{end}}
+    </section>
+  {{end}}
+
+  {{if .Doc.Patents}}
+    <section>
+      <h2>Patents</h2>
+      {{range .Doc.Patents}}
+        <div class="entry">
+          <div class="entry-title">
+            {{.PatentID}}{{with .Date}} <span class="normal muted">({{.}})</span>{{end}}{{with .Summary}} <span class="normal">— {{.}}</span>{{end}}
+          </div>
+          {{with .URL}}
+            <div class="entry-link"><a href="{{.}}" target="_blank">{{.}}</a></div>
+          {{end}}
+        </div>
+      {{end}}
+    </section>
+  {{end}}
+</article>
 {{end}}

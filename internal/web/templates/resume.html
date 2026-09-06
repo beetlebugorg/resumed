@@ -1,0 +1,55 @@
+{{define "content"}}
+{{$hi := .Highlight}}
+
+{{/* Action bar. The document itself has no chrome, so everything you might
+     want to do with it lives here, above the paper. */}}
+<div class="doc-bar">
+  <div class="doc-bar-left">
+    {{with .Doc.Job}}
+      <a class="back" href="/jobs/{{.ID}}">&larr; {{.Label}}</a>
+    {{else}}
+      <a class="back" href="/">&larr; Jobs</a>
+    {{end}}
+  </div>
+  <div class="doc-bar-actions">
+    {{with .Doc.Resume}}
+      {{if .PDFPath}}<a class="btn primary" href="/resumes/{{.ID}}/pdf" target="_blank">PDF</a>{{end}}
+      <a class="btn" href="/resumes/{{.ID}}/typst" target="_blank">Typst</a>
+      {{if .SentPDFPath}}<a class="btn" href="/resumes/{{.ID}}/sent.pdf" target="_blank">PDF as sent</a>{{end}}
+      {{if not $.Frozen}}
+        <button class="btn"
+                hx-post="/resumes/{{.ID}}/render"
+                hx-swap="none"
+                hx-on::after-request="window.location.reload()">Re-render</button>
+      {{else}}
+        <span class="frozen-badge">{{if .Sent}}sent {{shortDate .SentAt}}{{else}}frozen &mdash; {{$.Status}}{{end}}</span>
+      {{end}}
+    {{end}}
+  </div>
+</div>
+
+{{with .Doc.Resume}}
+  {{with .Highlight}}
+    {{/* Collapsed by default. Useful when tuning emphasis, noise the rest of
+         the time, and it should never outweigh the document below it. */}}
+    <details class="doc-meta">
+      <summary>Emphasis &mdash; {{len .}} terms</summary>
+      <div>{{range $i, $t := .}}{{if $i}} {{end}}<code>{{$t}}</code>{{end}}</div>
+    </details>
+  {{end}}
+{{end}}
+
+{{/* The document. Deliberately shaped like the PDF — same order, same
+     sections, same emphasis — so reviewing here tells you what you are
+     about to send. */}}
+{{template "resume-doc" .}}
+
+{{with .Doc.Resume}}
+  {{with .Rationale}}
+    <details class="rationale">
+      <summary>Why this material was chosen</summary>
+      <div>{{.}}</div>
+    </details>
+  {{end}}
+{{end}}
+{{end}}

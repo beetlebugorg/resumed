@@ -43,9 +43,11 @@ ATS-hardening choices vs. the original template:
   // Links stay dark and readable; visible text is the real URL.
   show link: set text(fill: rgb("#1a1a1a"))
 
-  // Section headings: plain bold text (no smallcaps) + a rule.
+  // Section headings: plain bold text (no smallcaps) + a rule. 14pt is the
+  // bottom of the 14-18pt band ATS guidance asks for; at 1.05em they rendered
+  // at ~11pt, barely above body text, which some parsers miss as a heading.
   show heading: it => block(above: 1.1em, below: 0.65em)[
-    #set text(size: 1.05em, weight: 700)
+    #set text(size: 14pt, weight: 700)
     #upper(it.body)
     #v(-0.55em)
     #line(length: 100%, stroke: 0.6pt)
@@ -158,7 +160,9 @@ ATS-hardening choices vs. the original template:
 }
 
 // Projects as a CLEAN LIST — deliberately NOT job-shaped. A single intro line
-// (bold name, summary, link, year) then bullets. Because there is no separate
+// (bold name, summary, link) then bullets. The date parameter is kept for
+// callers that have month-precision dates; the resume renderer does not pass
+// one, because project dates are only known to the year. Because there is no separate
 // employer/title/location line, parsers don't manufacture bogus job entries or
 // dump the section into another role's description.
 #let proj(
@@ -196,8 +200,17 @@ ATS-hardening choices vs. the original template:
   summary: "",
 ) = {
   block(below: 0.4em, {
-    strong(link(url)[#id])
-    if date != "" { [ #emph[(#date)]] }
-    if summary != "" { [ — #summary] }
+    set block(spacing: 0.28em)
+    // The patent number is plain bold text, not a link. Hiding a URL behind
+    // display text is the pattern ATS guidance warns about, so the address goes
+    // on its own visible line below — the same shape proj() uses.
+    block({
+      strong(id)
+      if date != "" { [ #emph[(#date)]] }
+      if summary != "" { [ — #summary] }
+    })
+    if url != "" {
+      block(text(size: 0.92em, link(url)[#url.replace("https://", "")]))
+    }
   })
 }
