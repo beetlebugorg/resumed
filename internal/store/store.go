@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	_ "modernc.org/sqlite" // pure-Go driver, no cgo
@@ -62,6 +63,30 @@ func migrate(db *sql.DB) error {
 		}
 		if _, err := db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN retired_at TEXT`); err != nil {
 			return fmt.Errorf("add retired_at to %s: %w", table, err)
+		}
+	}
+
+	// Fact versions. Editing a fact appends a row rather than changing one, so
+	// a resume keeps rendering the text it was built from. fact_id groups the
+	// versions of one fact; the row id identifies the version, and that is what
+	// resume_items points at.
+	for _, table := range factTables {
+		has, err := hasColumn(db, table, "fact_id")
+		if err != nil {
+			return err
+		}
+		if has {
+			continue
+		}
+		if _, err := db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN fact_id INTEGER`); err != nil {
+			return fmt.Errorf("add fact_id to %s: %w", table, err)
+		}
+		if _, err := db.Exec(`ALTER TABLE ` + table + ` ADD COLUMN version INTEGER NOT NULL DEFAULT 1`); err != nil {
+			return fmt.Errorf("add version to %s: %w", table, err)
+		}
+		// Existing rows are each the first version of their own fact.
+		if _, err := db.Exec(`UPDATE ` + table + ` SET fact_id = id WHERE fact_id IS NULL`); err != nil {
+			return fmt.Errorf("backfill fact_id on %s: %w", table, err)
 		}
 	}
 
@@ -131,12 +156,140 @@ func hasColumn(db *sql.DB, table, column string) (bool, error) {
 	return false, rows.Err()
 }
 
+// factFilter restricts a fact table to the rows new tailoring may select: the
+// current version of each fact, and not retired. Passing all=true returns every
+// row, which is what rendering a stored resume needs, since it points at the
+// version it was built from.
+func factFilter(table string, all bool) string {
+	if all {
+		return ""
+	}
+	// COALESCE because a row inserted without a fact_id is the first version of
+	// its own fact, and NULL never equals NULL in SQL.
+	return " WHERE id = (SELECT MAX(v.id) FROM " + table + " v" +
+		" WHERE COALESCE(v.fact_id, v.id) = COALESCE(" + table + ".fact_id, " + table + ".id))" +
+		" AND retired_at IS NULL"
+}
+
 // retireClause filters out retired rows unless the caller wants them.
 func retireClause(includeRetired bool, prefix string) string {
 	if includeRetired {
 		return ""
 	}
 	return " " + prefix + " retired_at IS NULL"
+}
+
+// factColumns are the fields UpdateFact may set, per table. Anything outside
+// this list is structural (ids, versions, positions) or bookkeeping.
+var factColumns = map[string][]string{
+	"roles":           {"company", "location", "title", "start_date", "end_date", "summary"},
+	"bullets":         {"text", "tags"},
+	"projects":        {"name", "url", "date", "summary", "tags"},
+	"project_bullets": {"text", "tags"},
+	"patents":         {"patent_id", "url", "date", "summary"},
+	"skills":          {"name", "category"},
+}
+
+// UpdateFact records a correction as a new version of a fact. The old row stays
+// exactly as it is, so every resume that selected it renders the same text it
+// rendered before. The new row becomes what new tailoring sees.
+//
+// It returns the id of the new version, which is what resume_items would point at
+// from here on.
+func (s *Store) UpdateFact(kind string, id int64, fields map[string]string) (int64, error) {
+	table, ok := factTable(kind)
+	if !ok {
+		return 0, fmt.Errorf("unknown fact kind %q", kind)
+	}
+	allowed := factColumns[table]
+	if len(fields) == 0 {
+		return 0, fmt.Errorf("no fields to update")
+	}
+	for k := range fields {
+		if !slices.Contains(allowed, k) {
+			return 0, fmt.Errorf("%s has no updatable field %q", table, k)
+		}
+	}
+
+	cols, err := s.columnsOf(table)
+	if err != nil {
+		return 0, err
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	var factID int64
+	var version int
+	if err := tx.QueryRow(`SELECT COALESCE(fact_id, id), version FROM `+table+` WHERE id = ?`, id).
+		Scan(&factID, &version); err == sql.ErrNoRows {
+		return 0, fmt.Errorf("%s %d not found", table, id)
+	} else if err != nil {
+		return 0, err
+	}
+
+	// Copy every column except the row identity, overriding what changed.
+	var names []string
+	var values []string
+	var args []any
+	for _, c := range cols {
+		switch c {
+		case "id":
+			continue
+		case "version":
+			names = append(names, c)
+			values = append(values, "?")
+			args = append(args, version+1)
+		case "fact_id":
+			names = append(names, c)
+			values = append(values, "?")
+			args = append(args, factID)
+		case "retired_at":
+			// A correction is not a retirement.
+			names = append(names, c)
+			values = append(values, "NULL")
+		default:
+			names = append(names, c)
+			if v, ok := fields[c]; ok {
+				values = append(values, "?")
+				args = append(args, v)
+			} else {
+				values = append(values, c)
+			}
+		}
+	}
+
+	res, err := tx.Exec(`INSERT INTO `+table+` (`+strings.Join(names, ", ")+`) `+
+		`SELECT `+strings.Join(values, ", ")+` FROM `+table+` WHERE id = ?`, append(args, id)...)
+	if err != nil {
+		return 0, err
+	}
+	newID, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	return newID, tx.Commit()
+}
+
+// columnsOf reads a table's column names in declaration order.
+func (s *Store) columnsOf(table string) ([]string, error) {
+	rows, err := s.db.Query(`SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
 }
 
 // SetFactRetired retires or restores a fact. Retiring never deletes: resumes
@@ -285,7 +438,7 @@ func (s *Store) factBase(includeRetired bool) (*FactBase, error) {
 func (s *Store) ListRoles(includeRetired bool) ([]Role, error) {
 	rows, err := s.db.Query(`
 		SELECT id, company, location, title, start_date, end_date, summary, position, COALESCE(retired_at, '')
-		FROM roles` + retireClause(includeRetired, "WHERE") + ` ORDER BY position, id`)
+		FROM roles` + factFilter("roles", includeRetired) + ` ORDER BY position, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -306,7 +459,7 @@ func (s *Store) ListRoles(includeRetired bool) ([]Role, error) {
 	}
 
 	brows, err := s.db.Query(`SELECT id, role_id, text, tags, source, position, COALESCE(retired_at, '')
-		FROM bullets` + retireClause(includeRetired, "WHERE") + ` ORDER BY position, id`)
+		FROM bullets` + factFilter("bullets", includeRetired) + ` ORDER BY position, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -372,7 +525,7 @@ func (s *Store) DeleteBullet(id int64) error {
 
 func (s *Store) ListProjects(includeRetired bool) ([]Project, error) {
 	rows, err := s.db.Query(`SELECT id, name, url, date, summary, tags, position, COALESCE(retired_at, '')
-		FROM projects` + retireClause(includeRetired, "WHERE") + ` ORDER BY position, id`)
+		FROM projects` + factFilter("projects", includeRetired) + ` ORDER BY position, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -392,7 +545,7 @@ func (s *Store) ListProjects(includeRetired bool) ([]Project, error) {
 	}
 
 	brows, err := s.db.Query(`SELECT id, project_id, text, tags, source, position, COALESCE(retired_at, '')
-		FROM project_bullets` + retireClause(includeRetired, "WHERE") + ` ORDER BY position, id`)
+		FROM project_bullets` + factFilter("project_bullets", includeRetired) + ` ORDER BY position, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -454,7 +607,7 @@ func (s *Store) DeleteProjectBullet(id int64) error {
 
 func (s *Store) ListPatents(includeRetired bool) ([]Patent, error) {
 	rows, err := s.db.Query(`SELECT id, patent_id, url, date, summary, position, COALESCE(retired_at, '')
-		FROM patents` + retireClause(includeRetired, "WHERE") + ` ORDER BY position, id`)
+		FROM patents` + factFilter("patents", includeRetired) + ` ORDER BY position, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -486,7 +639,7 @@ func (s *Store) DeletePatent(id int64) error {
 
 func (s *Store) ListSkills(includeRetired bool) ([]Skill, error) {
 	rows, err := s.db.Query(`SELECT id, category, name, tags, position, COALESCE(retired_at, '')
-		FROM skills` + retireClause(includeRetired, "WHERE") + ` ORDER BY position, id`)
+		FROM skills` + factFilter("skills", includeRetired) + ` ORDER BY position, id`)
 	if err != nil {
 		return nil, err
 	}

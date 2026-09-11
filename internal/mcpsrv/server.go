@@ -158,6 +158,31 @@ func registerFactTools(s *mcp.Server, a *app.App) {
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
+		Name:  "update_facts",
+		Title: "Correct a fact",
+		Description: "Fix the wording or a field of an existing fact. The correction is recorded as a new " +
+			"version: the old row stays, so every resume already built from it keeps rendering the text it " +
+			"was built from, and get_fact_base returns the corrected version for new tailoring. Use this for " +
+			"a wrong date, a wrong number, or wording that overstates. Use retire_facts instead when the fact " +
+			"should stop being claimed at all, and add_facts when it is genuinely new material.",
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in UpdateFactsInput) (*mcp.CallToolResult, UpdateFactsOutput, error) {
+		if len(in.Updates) == 0 {
+			return fail[UpdateFactsOutput]("no updates supplied")
+		}
+		var out UpdateFactsOutput
+		for _, u := range in.Updates {
+			newID, err := a.Store.UpdateFact(u.Kind, u.ID, u.Fields)
+			if err != nil {
+				return fail[UpdateFactsOutput]("%w", err)
+			}
+			out.Versions = append(out.Versions, FactVersion{Kind: u.Kind, WasID: u.ID, NowID: newID})
+		}
+		out.Note = fmt.Sprintf("%d fact(s) corrected. Resumes already built still render the old text; "+
+			"re-run save_resume to pick up the corrections.", len(out.Versions))
+		return ok(out)
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
 		Name:  "retire_facts",
 		Title: "Retire or restore facts",
 		Description: "Retire a fact so new resumes stop using it, without deleting it. Use this when a fact is " +
@@ -183,6 +208,27 @@ func registerFactTools(s *mcp.Server, a *app.App) {
 		out.Note = fmt.Sprintf("%d fact(s) %s. Existing resume versions are unaffected and still render.", len(out.Changed), verb)
 		return ok(out)
 	})
+}
+
+type FactUpdate struct {
+	Kind   string            `json:"kind" jsonschema:"one of: role, bullet, project, project_bullet, patent, skill"`
+	ID     int64             `json:"id" jsonschema:"the fact id from get_fact_base"`
+	Fields map[string]string `json:"fields" jsonschema:"fields to change. bullet and project_bullet take text and tags; role takes company, location, title, start_date, end_date, summary; project takes name, url, date, summary, tags; patent takes patent_id, url, date, summary; skill takes name and category"`
+}
+
+type UpdateFactsInput struct {
+	Updates []FactUpdate `json:"updates"`
+}
+
+type FactVersion struct {
+	Kind  string `json:"kind"`
+	WasID int64  `json:"was_id"`
+	NowID int64  `json:"now_id"`
+}
+
+type UpdateFactsOutput struct {
+	Versions []FactVersion `json:"versions"`
+	Note     string        `json:"note"`
 }
 
 type FactRef struct {
