@@ -59,7 +59,7 @@ var funcs = template.FuncMap{
 
 // pageFiles lists each full page; every one is parsed with the layout and the
 // partials so it can render fragments inline on a cold load.
-var pageFiles = []string{"jobs.html", "job.html", "resume.html", "questions.html", "facts.html"}
+var pageFiles = []string{"jobs.html", "job.html", "resume.html", "cover.html", "questions.html", "facts.html"}
 
 func newServer(a *app.App) (*server, error) {
 	s := &server{app: a, pages: map[string]*template.Template{}}
@@ -181,6 +181,7 @@ func Serve(a *app.App, addr string) error {
 	mux.HandleFunc("GET /resumes/{id}/typst", s.resumeTypst)
 	mux.HandleFunc("POST /resumes/{id}/render", s.renderResume)
 
+	mux.HandleFunc("GET /cover-letters/{id}", s.showCover)
 	mux.HandleFunc("GET /cover-letters/{id}/pdf", s.coverPDF)
 	mux.HandleFunc("GET /cover-letters/{id}/typst", s.coverTypst)
 	mux.HandleFunc("POST /cover-letters/{id}/render", s.renderCover)
@@ -216,6 +217,58 @@ type versionsView struct {
 	Status string
 }
 
+// coverViewFor gathers what the letter template needs. The profile and
+// contacts come from the fact base rather than the letter, the same way the
+// print renderer builds them, so the screen and the PDF show one letterhead.
+func (s *server) coverViewFor(letter *store.CoverLetter, job *store.Job) coverView {
+	v := coverView{Letter: letter, Job: job}
+	if letter == nil {
+		return v
+	}
+	if p, err := s.app.Store.GetProfile(); err == nil {
+		v.Profile = p
+	}
+	if c, err := s.app.Store.ListContacts(); err == nil {
+		v.Contacts = c
+	}
+	v.Date = render.LetterDate(letter.UpdatedAt)
+	if job != nil {
+		v.Frozen, _ = s.frozen(job.ID)
+	}
+	return v
+}
+
+// coverPage renders a cover letter on its own, away from the job's other
+// material.
+type coverPage struct {
+	Title     string
+	Nav       string
+	Cover     coverView
+	OpenCount int
+	Flash     string
+}
+
+func (s *server) showCover(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if fail(w, err) {
+		return
+	}
+	letter, err := s.app.Store.GetCoverLetter(id)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	job, err := s.app.Store.GetJob(letter.JobID)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	s.render(w, "cover.html", coverPage{
+		Title: job.Label(), Nav: "jobs",
+		Cover: s.coverViewFor(letter, job), OpenCount: s.openCount(),
+	})
+}
+
 // frozen reports whether a job's resume may still be re-rendered.
 func (s *server) frozen(jobID int64) (bool, string) {
 	f, status, err := s.app.Store.ResumeFrozen(jobID)
@@ -245,8 +298,13 @@ func (s *server) latestDoc(resumes []store.Resume) (*store.Document, []string) {
 // coverView carries a job's letter, or nil when none has been written. Error
 // is set when a re-render failed, so the row can say so in place.
 type coverView struct {
-	Letter *store.CoverLetter
-	Error  string
+	Letter   *store.CoverLetter
+	Profile  store.Profile
+	Contacts []store.Contact
+	Job      *store.Job
+	Date     string
+	Frozen   bool
+	Error    string
 }
 
 type questionView struct {
@@ -372,7 +430,7 @@ func (s *server) showJob(w http.ResponseWriter, r *http.Request) {
 		Notes:     notesView{JobID: id, Notes: notes},
 		Questions: qviews,
 		Versions:  versionsView{Resumes: resumes, Doc: jobDoc, Highlight: jobTerms, Frozen: jobFrozen, Status: jobStatus},
-		Cover:     coverView{Letter: letter},
+		Cover:     s.coverViewFor(letter, job),
 		OpenCount: s.openCount(),
 		Flash:     r.URL.Query().Get("flash"),
 	})
@@ -937,7 +995,8 @@ func (s *server) renderCover(w http.ResponseWriter, r *http.Request) {
 		if fail(w, err) {
 			return
 		}
-		view := coverView{Letter: fresh}
+		job, _ := s.app.Store.GetJob(fresh.JobID)
+		view := s.coverViewFor(fresh, job)
 		if renderErr != nil {
 			view.Error = renderErr.Error()
 		}

@@ -124,30 +124,30 @@
 {{define "cover"}}
   <div id="cover">
     {{if .Letter}}
-      <div class="version-row">
-        <div>
-          <strong>Current</strong>
-          <span class="muted" style="font-size:0.82rem"> · written {{shortDate .Letter.UpdatedAt}}</span>
-          {{with .Letter.Rationale}}<div class="muted" style="font-size:0.85rem; margin-top:0.2rem">{{.}}</div>{{end}}
-          {{with $.Error}}<div class="muted" style="font-size:0.85rem; margin-top:0.2rem">render failed: {{.}}</div>{{end}}
+      <div class="doc-bar">
+        <div class="doc-bar-left">
+          <span class="muted">Written {{shortDate .Letter.UpdatedAt}}</span>
+          {{with $.Error}}<span class="muted">render failed: {{.}}</span>{{end}}
         </div>
-        <div class="version-actions">
-          {{if .Letter.PDFPath}}<a href="/cover-letters/{{.Letter.ID}}/pdf" target="_blank">PDF</a>{{end}}
-          <a href="/cover-letters/{{.Letter.ID}}/typst" target="_blank">Typst</a>
-          <button class="link"
-                  hx-post="/cover-letters/{{.Letter.ID}}/render"
-                  hx-target="#cover"
-                  hx-swap="outerHTML">re-render</button>
+        <div class="doc-bar-actions">
+          {{if .Letter.PDFPath}}<a class="btn primary" href="/cover-letters/{{.Letter.ID}}/pdf" target="_blank">PDF</a>{{end}}
+          <a class="btn" href="/cover-letters/{{.Letter.ID}}/typst" target="_blank">Typst</a>
+          <a class="btn" href="/cover-letters/{{.Letter.ID}}">Full page</a>
+          {{if not $.Frozen}}
+            <button class="btn"
+                    hx-post="/cover-letters/{{.Letter.ID}}/render"
+                    hx-target="#cover"
+                    hx-swap="outerHTML">Re-render</button>
+          {{end}}
         </div>
       </div>
-      <details style="margin-top:0.5rem">
-        <summary class="muted" style="font-size:0.85rem; cursor:pointer">Read the letter</summary>
-        <div style="margin-top:0.5rem; white-space:pre-wrap; font-size:0.9rem">{{with .Letter.Greeting}}{{.}}
-
-{{end}}{{.Letter.Body}}{{with .Letter.Closing}}
-
-{{.}}{{end}}</div>
-      </details>
+      {{template "cover-doc" .}}
+      {{with .Letter.Rationale}}
+        <details class="rationale">
+          <summary>Why this argument was made</summary>
+          <div>{{.}}</div>
+        </details>
+      {{end}}
     {{else}}
       <p class="empty">No cover letter yet. Ask Claude to write one for this job.</p>
     {{end}}
@@ -308,6 +308,40 @@
         </div>
       {{end}}
     </section>
+  {{end}}
+</article>
+{{end}}
+
+
+{{/* The rendered cover letter. Takes any value with .Letter and .Job. Follows
+     the print template rather than the resume view: a letter opens quietly,
+     because the reader is about to read prose. */}}
+{{define "cover-doc"}}
+<article class="doc letter">
+  <header class="letter-head">
+    <div class="letter-name">{{.Profile.Name}}</div>
+    <div class="letter-contacts">
+      {{range $i, $c := .Contacts}}{{if $i}} <span class="sep">|</span> {{end}}{{if $c.URL}}<a href="{{$c.URL}}">{{$c.Value}}</a>{{else}}{{$c.Value}}{{end}}{{end}}
+    </div>
+    {{with .Profile.Location}}<div class="letter-contacts">{{.}}</div>{{end}}
+  </header>
+
+  {{with .Date}}<p class="letter-date">{{.}}</p>{{end}}
+
+  {{with .Job}}
+    <p class="letter-recipient">
+      {{with .Company}}{{.}}<br>{{end}}
+      {{with .Title}}Re: {{.}}{{end}}
+    </p>
+  {{end}}
+
+  {{with .Letter.Greeting}}<p class="letter-greeting">{{.}}</p>{{end}}
+
+  {{range .Letter.Paragraphs}}<p>{{.}}</p>{{end}}
+
+  {{with .Letter.Closing}}
+    <p class="letter-closing">{{.}}</p>
+    <p class="letter-signature">{{$.Profile.Name}}</p>
   {{end}}
 </article>
 {{end}}

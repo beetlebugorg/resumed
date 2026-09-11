@@ -532,3 +532,29 @@ details.add-manual > *:not(summary) { margin-top: 0.6rem; }
   font-size: 0.75rem;
   vertical-align: middle;
 }
+
+/* ------------------------------------------------------- cover letter view */
+
+/* The letter follows ats-cover-letter.typ rather than the resume view. A
+   resume opens with a large centered name because the reader is scanning for
+   identity. A letter opens quietly, because the reader is about to read
+   prose. */
+.doc.letter { max-width: 78ch; }
+.letter-head {
+  text-align: left;
+  margin-bottom: 1.75rem;
+  padding-bottom: 0.9rem;
+  border-bottom: 1px solid var(--border);
+}
+.letter-name { font-weight: 650; font-size: 1.05rem; }
+.letter-contacts { font-size: 0.82rem; color: var(--muted); margin-top: 0.15rem; }
+.letter-contacts a { color: var(--muted); text-decoration: none; }
+.letter-contacts a:hover { color: var(--accent); text-decoration: underline; }
+.letter-contacts .sep { opacity: 0.5; }
+
+.doc.letter p { margin: 0 0 0.9rem; font-size: 0.93rem; line-height: 1.65; }
+.letter-date { color: var(--muted); }
+.letter-recipient { line-height: 1.45; }
+.letter-greeting { margin-top: 1.2rem; }
+.letter-closing { margin-bottom: 2.2rem; }
+.letter-signature { font-weight: 650; margin: 0; }

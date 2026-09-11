@@ -368,10 +368,10 @@ func Typst(doc *store.Document) string {
 	return b.String()
 }
 
-// letterDate renders the stored timestamp as "2 January 2006" for the letter
+// LetterDate renders the stored timestamp as "2 January 2006" for the letter
 // head. It uses the letter's own updated_at rather than the wall clock so a
 // re-render does not silently re-date a letter that was already sent.
-func letterDate(ts string) string {
+func LetterDate(ts string) string {
 	ts = strings.TrimSpace(ts)
 	if ts == "" {
 		return ""
@@ -412,7 +412,7 @@ func CoverLetterTypst(p store.Profile, contacts []store.Contact, job *store.Job,
 	}
 	b.WriteString("  ),\n")
 
-	if d := letterDate(c.UpdatedAt); d != "" {
+	if d := LetterDate(c.UpdatedAt); d != "" {
 		fmt.Fprintf(&b, "  date: %s,\n", quote(d))
 	}
 

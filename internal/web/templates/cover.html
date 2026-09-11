@@ -1,0 +1,34 @@
+{{define "content"}}
+<div class="doc-bar">
+  <div class="doc-bar-left">
+    {{with .Cover.Job}}
+      <a class="back" href="/jobs/{{.ID}}">&larr; {{.Label}}</a>
+    {{else}}
+      <a class="back" href="/">&larr; Jobs</a>
+    {{end}}
+  </div>
+  <div class="doc-bar-actions">
+    {{with .Cover.Letter}}
+      {{if .PDFPath}}<a class="btn primary" href="/cover-letters/{{.ID}}/pdf" target="_blank">PDF</a>{{end}}
+      <a class="btn" href="/cover-letters/{{.ID}}/typst" target="_blank">Typst</a>
+      {{if not $.Cover.Frozen}}
+        <button class="btn"
+                hx-post="/cover-letters/{{.ID}}/render"
+                hx-swap="none"
+                hx-on::after-request="window.location.reload()">Re-render</button>
+      {{end}}
+    {{end}}
+  </div>
+</div>
+
+{{template "cover-doc" .Cover}}
+
+{{with .Cover.Letter}}
+  {{with .Rationale}}
+    <details class="rationale">
+      <summary>Why this argument was made</summary>
+      <div>{{.}}</div>
+    </details>
+  {{end}}
+{{end}}
+{{end}}
