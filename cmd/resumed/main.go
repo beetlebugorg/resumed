@@ -126,7 +126,10 @@ func run() error {
 		st.Close()
 		return runMCP(a, func() (*store.Store, error) { return store.Open(*dbPath) })
 	case "serve":
-		return web.Serve(a, *addr)
+		// Same reason as mcp: a connection held open stops the write-ahead
+		// log from being checkpointed into the database file.
+		st.Close()
+		return web.Serve(func() (*store.Store, error) { return store.Open(*dbPath) }, *outRoot, *addr)
 	case "import":
 		if len(args) != 1 {
 			return fmt.Errorf("import needs exactly one file")

@@ -9,6 +9,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
@@ -32,9 +33,34 @@ import (
 var assets embed.FS
 
 type server struct {
-	app      *app.App
+	reopen   func() (*store.Store, error)
+	outRoot  string
 	pages    map[string]*template.Template
 	partials *template.Template
+}
+
+// appKey carries the request's App. Each request opens its own database
+// connection, so nothing is shared between them and no lock is needed.
+type appKey struct{}
+
+// appOf returns the App built for this request.
+func appOf(r *http.Request) *app.App { return r.Context().Value(appKey{}).(*app.App) }
+
+// withStore opens the database for one request and closes it afterwards.
+// SQLite cannot checkpoint its write-ahead log into the database file while a
+// connection is open, so a connection held for the life of the server leaves
+// the file on disk behind the data.
+func (s *server) withStore(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		st, err := s.reopen()
+		if err != nil {
+			http.Error(w, "open database: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer st.Close()
+		ctx := context.WithValue(r.Context(), appKey{}, app.New(st, s.outRoot))
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
 }
 
 var funcs = template.FuncMap{
@@ -61,8 +87,8 @@ var funcs = template.FuncMap{
 // partials so it can render fragments inline on a cold load.
 var pageFiles = []string{"jobs.html", "job.html", "resume.html", "cover.html", "questions.html", "facts.html"}
 
-func newServer(a *app.App) (*server, error) {
-	s := &server{app: a, pages: map[string]*template.Template{}}
+func newServer(reopen func() (*store.Store, error), outRoot string) (*server, error) {
+	s := &server{reopen: reopen, outRoot: outRoot, pages: map[string]*template.Template{}}
 	for _, name := range pageFiles {
 		t, err := template.New("layout.html").Funcs(funcs).
 			ParseFS(assets, "templates/layout.html", "templates/partials.html", "templates/"+name)
@@ -140,8 +166,10 @@ func pathID(r *http.Request, name string) (int64, error) {
 }
 
 // Serve starts the web UI.
-func Serve(a *app.App, addr string) error {
-	s, err := newServer(a)
+// Serve starts the web UI. reopen is called once per request, so the server
+// holds no database connection between them.
+func Serve(reopen func() (*store.Store, error), outRoot, addr string) error {
+	s, err := newServer(reopen, outRoot)
 	if err != nil {
 		return err
 	}
@@ -150,12 +178,14 @@ func Serve(a *app.App, addr string) error {
 		return err
 	}
 
-	mux := http.NewServeMux()
 	assetHandler, err := staticHandler(static)
 	if err != nil {
 		return fmt.Errorf("static assets: %w", err)
 	}
-	mux.Handle("GET /static/", http.StripPrefix("/static/", assetHandler))
+
+	// Routes that read or write the database. Everything registered here is
+	// wrapped so the connection lives only as long as the request.
+	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /{$}", s.listJobs)
 	mux.HandleFunc("POST /jobs", s.addJob)
@@ -186,8 +216,13 @@ func Serve(a *app.App, addr string) error {
 	mux.HandleFunc("GET /cover-letters/{id}/typst", s.coverTypst)
 	mux.HandleFunc("POST /cover-letters/{id}/render", s.renderCover)
 
-	fmt.Printf("resumed: http://%s  (db %s)\n", addr, a.Store.Path)
-	return http.ListenAndServe(addr, mux)
+	// The embedded assets need no database.
+	top := http.NewServeMux()
+	top.Handle("GET /static/", http.StripPrefix("/static/", assetHandler))
+	top.Handle("/", s.withStore(mux))
+
+	fmt.Printf("resumed: http://%s\n", addr)
+	return http.ListenAndServe(addr, top)
 }
 
 // ------------------------------------------------------------- view models
@@ -220,20 +255,20 @@ type versionsView struct {
 // coverViewFor gathers what the letter template needs. The profile and
 // contacts come from the fact base rather than the letter, the same way the
 // print renderer builds them, so the screen and the PDF show one letterhead.
-func (s *server) coverViewFor(letter *store.CoverLetter, job *store.Job) coverView {
+func (s *server) coverViewFor(r *http.Request, letter *store.CoverLetter, job *store.Job) coverView {
 	v := coverView{Letter: letter, Job: job}
 	if letter == nil {
 		return v
 	}
-	if p, err := s.app.Store.GetProfile(); err == nil {
+	if p, err := appOf(r).Store.GetProfile(); err == nil {
 		v.Profile = p
 	}
-	if c, err := s.app.Store.ListContacts(); err == nil {
+	if c, err := appOf(r).Store.ListContacts(); err == nil {
 		v.Contacts = c
 	}
 	v.Date = render.LetterDate(letter.UpdatedAt)
 	if job != nil {
-		v.Frozen, _ = s.frozen(job.ID)
+		v.Frozen, _ = s.frozen(r, job.ID)
 	}
 	return v
 }
@@ -253,25 +288,25 @@ func (s *server) showCover(w http.ResponseWriter, r *http.Request) {
 	if fail(w, err) {
 		return
 	}
-	letter, err := s.app.Store.GetCoverLetter(id)
+	letter, err := appOf(r).Store.GetCoverLetter(id)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
-	job, err := s.app.Store.GetJob(letter.JobID)
+	job, err := appOf(r).Store.GetJob(letter.JobID)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
 	s.render(w, "cover.html", coverPage{
 		Title: job.Label(), Nav: "jobs",
-		Cover: s.coverViewFor(letter, job), OpenCount: s.openCount(),
+		Cover: s.coverViewFor(r, letter, job), OpenCount: s.openCount(r),
 	})
 }
 
 // frozen reports whether a job's resume may still be re-rendered.
-func (s *server) frozen(jobID int64) (bool, string) {
-	f, status, err := s.app.Store.ResumeFrozen(jobID)
+func (s *server) frozen(r *http.Request, jobID int64) (bool, string) {
+	f, status, err := appOf(r).Store.ResumeFrozen(jobID)
 	if err != nil {
 		return false, ""
 	}
@@ -280,11 +315,11 @@ func (s *server) frozen(jobID int64) (bool, string) {
 
 // latestDoc assembles a job's current resume for inline display. A job with no
 // resume is the normal empty case, not an error, so both returns are nil.
-func (s *server) latestDoc(resumes []store.Resume) (*store.Document, []string) {
+func (s *server) latestDoc(r *http.Request, resumes []store.Resume) (*store.Document, []string) {
 	if len(resumes) == 0 {
 		return nil, nil
 	}
-	doc, err := s.app.Store.Assemble(resumes[0].ID)
+	doc, err := appOf(r).Store.Assemble(resumes[0].ID)
 	if err != nil {
 		return nil, nil
 	}
@@ -317,8 +352,8 @@ type questionView struct {
 }
 
 // openCount is the questions badge in the nav.
-func (s *server) openCount() int {
-	open, err := s.app.Store.ListQuestions("open", nil)
+func (s *server) openCount(r *http.Request) int {
+	open, err := appOf(r).Store.ListQuestions("open", nil)
 	if err != nil {
 		return 0
 	}
@@ -337,7 +372,7 @@ type jobsPage struct {
 
 func (s *server) listJobs(w http.ResponseWriter, r *http.Request) {
 	filter := r.URL.Query().Get("status")
-	jobs, err := s.app.Store.ListJobs(filter)
+	jobs, err := appOf(r).Store.ListJobs(filter)
 	if fail(w, err) {
 		return
 	}
@@ -348,7 +383,7 @@ func (s *server) listJobs(w http.ResponseWriter, r *http.Request) {
 	}
 	s.render(w, "jobs.html", jobsPage{
 		Title: "Jobs", Nav: "jobs", List: list,
-		OpenCount: s.openCount(), Flash: r.URL.Query().Get("flash"),
+		OpenCount: s.openCount(r), Flash: r.URL.Query().Get("flash"),
 	})
 }
 
@@ -358,7 +393,7 @@ func (s *server) addJob(w http.ResponseWriter, r *http.Request) {
 	}
 	url := strings.TrimSpace(r.FormValue("url"))
 	desc := strings.TrimSpace(r.FormValue("description"))
-	res, err := s.app.AddJob(r.Context(), url, desc, "", "", "")
+	res, err := appOf(r).AddJob(r.Context(), url, desc, "", "", "")
 	if err != nil {
 		redirect(w, r, "/?flash="+urlEscape(err.Error()))
 		return
@@ -388,30 +423,30 @@ func (s *server) showJob(w http.ResponseWriter, r *http.Request) {
 	if fail(w, err) {
 		return
 	}
-	job, err := s.app.Store.GetJob(id)
+	job, err := appOf(r).Store.GetJob(id)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
-	notes, err := s.app.Store.ListJobNotes(id)
+	notes, err := appOf(r).Store.ListJobNotes(id)
 	if fail(w, err) {
 		return
 	}
-	questions, err := s.app.Store.ListQuestions("", &id)
+	questions, err := appOf(r).Store.ListQuestions("", &id)
 	if fail(w, err) {
 		return
 	}
-	resumes, err := s.app.Store.ListResumes(id)
+	resumes, err := appOf(r).Store.ListResumes(id)
 	if fail(w, err) {
 		return
 	}
-	letter, err := s.app.Store.CoverLetterByJob(id)
+	letter, err := appOf(r).Store.CoverLetterByJob(id)
 	if fail(w, err) {
 		return
 	}
 
-	jobDoc, jobTerms := s.latestDoc(resumes)
-	jobFrozen, jobStatus := s.frozen(id)
+	jobDoc, jobTerms := s.latestDoc(r, resumes)
+	jobFrozen, jobStatus := s.frozen(r, id)
 
 	returnTo := fmt.Sprintf("/jobs/%d", id)
 	var qviews []questionView
@@ -430,8 +465,8 @@ func (s *server) showJob(w http.ResponseWriter, r *http.Request) {
 		Notes:     notesView{JobID: id, Notes: notes},
 		Questions: qviews,
 		Versions:  versionsView{Resumes: resumes, Doc: jobDoc, Highlight: jobTerms, Frozen: jobFrozen, Status: jobStatus},
-		Cover:     s.coverViewFor(letter, job),
-		OpenCount: s.openCount(),
+		Cover:     s.coverViewFor(r, letter, job),
+		OpenCount: s.openCount(r),
 		Flash:     r.URL.Query().Get("flash"),
 	})
 }
@@ -445,11 +480,11 @@ func (s *server) addNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if body := strings.TrimSpace(r.FormValue("body")); body != "" {
-		if _, err := s.app.Store.AddJobNote(id, body, "user"); fail(w, err) {
+		if _, err := appOf(r).Store.AddJobNote(id, body, "user"); fail(w, err) {
 			return
 		}
 	}
-	notes, err := s.app.Store.ListJobNotes(id)
+	notes, err := appOf(r).Store.ListJobNotes(id)
 	if fail(w, err) {
 		return
 	}
@@ -469,7 +504,7 @@ func (s *server) deleteNote(w http.ResponseWriter, r *http.Request) {
 	if fail(w, err) {
 		return
 	}
-	if err := s.app.Store.DeleteJobNote(id); fail(w, err) {
+	if err := appOf(r).Store.DeleteJobNote(id); fail(w, err) {
 		return
 	}
 	if isHTMX(r) {
@@ -495,10 +530,10 @@ func (s *server) updateStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	// Through the app, not the store: moving into applied freezes a copy of the
 	// resume as sent, and that needs the file copy the app layer does.
-	if err := s.app.SetJobStatus(id, status); fail(w, err) {
+	if err := appOf(r).SetJobStatus(id, status); fail(w, err) {
 		return
 	}
-	job, err := s.app.Store.GetJob(id)
+	job, err := appOf(r).Store.GetJob(id)
 	if fail(w, err) {
 		return
 	}
@@ -532,7 +567,7 @@ func (s *server) updateDescription(w http.ResponseWriter, r *http.Request) {
 			fields[k] = strings.TrimSpace(v[0])
 		}
 	}
-	if err := s.app.Store.UpdateJobFields(id, fields); fail(w, err) {
+	if err := appOf(r).Store.UpdateJobFields(id, fields); fail(w, err) {
 		return
 	}
 	redirect(w, r, fmt.Sprintf("/jobs/%d?flash=%s", id, urlEscape("posting updated")))
@@ -543,7 +578,7 @@ func (s *server) deleteJob(w http.ResponseWriter, r *http.Request) {
 	if fail(w, err) {
 		return
 	}
-	if err := s.app.Store.DeleteJob(id); fail(w, err) {
+	if err := appOf(r).Store.DeleteJob(id); fail(w, err) {
 		return
 	}
 	redirect(w, r, "/")
@@ -559,11 +594,11 @@ type questionsPage struct {
 }
 
 func (s *server) listQuestions(w http.ResponseWriter, r *http.Request) {
-	all, err := s.app.Store.ListQuestions("", nil)
+	all, err := appOf(r).Store.ListQuestions("", nil)
 	if fail(w, err) {
 		return
 	}
-	jobs, err := s.app.Store.ListJobs("")
+	jobs, err := appOf(r).Store.ListJobs("")
 	if fail(w, err) {
 		return
 	}
@@ -593,7 +628,7 @@ func (s *server) listQuestions(w http.ResponseWriter, r *http.Request) {
 
 // questionFragment re-renders one question card, in view or edit mode.
 func (s *server) questionFragment(w http.ResponseWriter, r *http.Request, id int64, editing bool) {
-	qs, err := s.app.Store.ListQuestions("", nil)
+	qs, err := appOf(r).Store.ListQuestions("", nil)
 	if fail(w, err) {
 		return
 	}
@@ -603,7 +638,7 @@ func (s *server) questionFragment(w http.ResponseWriter, r *http.Request, id int
 		}
 		v := questionView{Q: q, ReturnTo: returnTo(r, "/questions"), Editing: editing}
 		if q.JobID != nil {
-			if job, err := s.app.Store.GetJob(*q.JobID); err == nil {
+			if job, err := appOf(r).Store.GetJob(*q.JobID); err == nil {
 				v.JobLabel = job.Label()
 			}
 		}
@@ -642,7 +677,7 @@ func (s *server) answerQuestion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if answer := strings.TrimSpace(r.FormValue("answer")); answer != "" {
-		if err := s.app.Store.AnswerQuestion(id, answer); fail(w, err) {
+		if err := appOf(r).Store.AnswerQuestion(id, answer); fail(w, err) {
 			return
 		}
 	}
@@ -661,7 +696,7 @@ func (s *server) dismissQuestion(w http.ResponseWriter, r *http.Request) {
 	if fail(w, err) {
 		return
 	}
-	if err := s.app.Store.SetQuestionStatus(id, "dismissed"); fail(w, err) {
+	if err := appOf(r).Store.SetQuestionStatus(id, "dismissed"); fail(w, err) {
 		return
 	}
 	if isHTMX(r) {
@@ -712,12 +747,12 @@ type factsPage struct {
 func (s *server) showFacts(w http.ResponseWriter, r *http.Request) {
 	// FactBaseAll: the facts page is where you retire and restore, so it has to
 	// show what is already retired.
-	fb, err := s.app.Store.FactBaseAll()
+	fb, err := appOf(r).Store.FactBaseAll()
 	if fail(w, err) {
 		return
 	}
 	page := factsPage{
-		Title: "Facts", Nav: "facts", OpenCount: s.openCount(),
+		Title: "Facts", Nav: "facts", OpenCount: s.openCount(r),
 		Profile: fb.Profile, Contacts: fb.Contacts,
 		Flash: r.URL.Query().Get("flash"),
 	}
@@ -793,13 +828,13 @@ func (s *server) setFactRetired(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	retire := r.PathValue("verb") == "retire"
-	if err := s.app.Store.SetFactRetired(kind, id, retire); err != nil {
+	if err := appOf(r).Store.SetFactRetired(kind, id, retire); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if isHTMX(r) {
 		// Re-render just this row in its new state.
-		row, err := s.factRowByID(kind, id)
+		row, err := s.factRowByID(r, kind, id)
 		if fail(w, err) {
 			return
 		}
@@ -810,8 +845,8 @@ func (s *server) setFactRetired(w http.ResponseWriter, r *http.Request) {
 }
 
 // factRowByID rebuilds one row after its retired state changes.
-func (s *server) factRowByID(kind string, id int64) (factRow, error) {
-	fb, err := s.app.Store.FactBaseAll()
+func (s *server) factRowByID(r *http.Request, kind string, id int64) (factRow, error) {
+	fb, err := appOf(r).Store.FactBaseAll()
 	if err != nil {
 		return factRow{}, err
 	}
@@ -885,7 +920,7 @@ func (s *server) showResume(w http.ResponseWriter, r *http.Request) {
 	if fail(w, err) {
 		return
 	}
-	doc, err := s.app.Store.Assemble(id)
+	doc, err := appOf(r).Store.Assemble(id)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -901,11 +936,11 @@ func (s *server) showResume(w http.ResponseWriter, r *http.Request) {
 	var frozen bool
 	var status string
 	if doc.Job != nil {
-		frozen, status = s.frozen(doc.Job.ID)
+		frozen, status = s.frozen(r, doc.Job.ID)
 	}
 	s.render(w, "resume.html", resumePage{
 		Title: title, Nav: "jobs", Doc: doc, Highlight: terms,
-		Frozen: frozen, Status: status, OpenCount: s.openCount(),
+		Frozen: frozen, Status: status, OpenCount: s.openCount(r),
 	})
 }
 
@@ -956,7 +991,7 @@ func (s *server) resumePDF(w http.ResponseWriter, r *http.Request) {
 	if fail(w, err) {
 		return
 	}
-	res, err := s.app.Store.GetResume(id)
+	res, err := appOf(r).Store.GetResume(id)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -965,8 +1000,8 @@ func (s *server) resumePDF(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no PDF for this version — render it first", http.StatusNotFound)
 		return
 	}
-	job, _ := s.app.Store.GetJob(res.JobID)
-	profile, _ := s.app.Store.GetProfile()
+	job, _ := appOf(r).Store.GetJob(res.JobID)
+	profile, _ := appOf(r).Store.GetProfile()
 	s.servePDF(w, r, res.PDFPath, downloadName(profile.Name, "resume", job))
 }
 
@@ -975,7 +1010,7 @@ func (s *server) coverPDF(w http.ResponseWriter, r *http.Request) {
 	if fail(w, err) {
 		return
 	}
-	c, err := s.app.Store.GetCoverLetter(id)
+	c, err := appOf(r).Store.GetCoverLetter(id)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -984,8 +1019,8 @@ func (s *server) coverPDF(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no PDF for this cover letter — render it first", http.StatusNotFound)
 		return
 	}
-	job, _ := s.app.Store.GetJob(c.JobID)
-	profile, _ := s.app.Store.GetProfile()
+	job, _ := appOf(r).Store.GetJob(c.JobID)
+	profile, _ := appOf(r).Store.GetProfile()
 	s.servePDF(w, r, c.PDFPath, downloadName(profile.Name, "cover-letter", job))
 }
 
@@ -994,7 +1029,7 @@ func (s *server) coverTypst(w http.ResponseWriter, r *http.Request) {
 	if fail(w, err) {
 		return
 	}
-	c, err := s.app.Store.GetCoverLetter(id)
+	c, err := appOf(r).Store.GetCoverLetter(id)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -1008,19 +1043,19 @@ func (s *server) renderCover(w http.ResponseWriter, r *http.Request) {
 	if fail(w, err) {
 		return
 	}
-	c, err := s.app.Store.GetCoverLetter(id)
+	c, err := appOf(r).Store.GetCoverLetter(id)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
-	_, renderErr := s.app.RenderCover(id)
+	_, renderErr := appOf(r).RenderCover(id)
 	if isHTMX(r) {
-		fresh, err := s.app.Store.CoverLetterByJob(c.JobID)
+		fresh, err := appOf(r).Store.CoverLetterByJob(c.JobID)
 		if fail(w, err) {
 			return
 		}
-		job, _ := s.app.Store.GetJob(fresh.JobID)
-		view := s.coverViewFor(fresh, job)
+		job, _ := appOf(r).Store.GetJob(fresh.JobID)
+		view := s.coverViewFor(r, fresh, job)
 		if renderErr != nil {
 			view.Error = renderErr.Error()
 		}
@@ -1037,7 +1072,7 @@ func (s *server) resumeSentPDF(w http.ResponseWriter, r *http.Request) {
 	if fail(w, err) {
 		return
 	}
-	res, err := s.app.Store.GetResume(id)
+	res, err := appOf(r).Store.GetResume(id)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -1046,8 +1081,8 @@ func (s *server) resumeSentPDF(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no sent copy was captured for this resume", http.StatusNotFound)
 		return
 	}
-	job, _ := s.app.Store.GetJob(res.JobID)
-	profile, _ := s.app.Store.GetProfile()
+	job, _ := appOf(r).Store.GetJob(res.JobID)
+	profile, _ := appOf(r).Store.GetProfile()
 	s.servePDF(w, r, res.SentPDFPath, downloadName(profile.Name, "resume-as-sent", job))
 }
 
@@ -1056,7 +1091,7 @@ func (s *server) resumeTypst(w http.ResponseWriter, r *http.Request) {
 	if fail(w, err) {
 		return
 	}
-	res, err := s.app.Store.GetResume(id)
+	res, err := appOf(r).Store.GetResume(id)
 	if err != nil {
 		http.NotFound(w, r)
 		return
@@ -1070,15 +1105,15 @@ func (s *server) renderResume(w http.ResponseWriter, r *http.Request) {
 	if fail(w, err) {
 		return
 	}
-	res, err := s.app.Store.GetResume(id)
+	res, err := appOf(r).Store.GetResume(id)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
-	out, renderErr := s.app.Render(id)
+	out, renderErr := appOf(r).Render(id)
 
 	if isHTMX(r) {
-		resumes, err := s.app.Store.ListResumes(res.JobID)
+		resumes, err := appOf(r).Store.ListResumes(res.JobID)
 		if fail(w, err) {
 			return
 		}
@@ -1090,8 +1125,8 @@ func (s *server) renderResume(w http.ResponseWriter, r *http.Request) {
 		default:
 			w.Header().Set("HX-Trigger", trigger(fmt.Sprintf("rendered v%d", out.Version)))
 		}
-		rdoc, rterms := s.latestDoc(resumes)
-		rf, rs := s.frozen(res.JobID)
+		rdoc, rterms := s.latestDoc(r, resumes)
+		rf, rs := s.frozen(r, res.JobID)
 		s.partial(w, "versions", versionsView{Resumes: resumes, Doc: rdoc, Highlight: rterms, Frozen: rf, Status: rs})
 		return
 	}
