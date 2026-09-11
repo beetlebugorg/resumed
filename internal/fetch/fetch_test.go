@@ -9,13 +9,13 @@ import (
 
 func TestCompanyFromURL(t *testing.T) {
 	cases := map[string]string{
-		"https://job-boards.greenhouse.io/anthropic/jobs/5110511008": "Anthropic",
-		"https://boards.greenhouse.io/acme-corp/jobs/42":             "Acme Corp",
-		"https://jobs.lever.co/figma/abc-123":                        "Figma",
-		"https://jobs.ashbyhq.com/openai/xyz":                        "Openai",
-		"https://apply.workable.com/some_startup/j/ABC/":             "Some Startup",
+		"https://job-boards.greenhouse.io/northwind/jobs/40000001": "Northwind",
+		"https://boards.greenhouse.io/acme-corp/jobs/42":           "Acme Corp",
+		"https://jobs.lever.co/figma/abc-123":                      "Figma",
+		"https://jobs.ashbyhq.com/openai/xyz":                      "Openai",
+		"https://apply.workable.com/some_startup/j/ABC/":           "Some Startup",
 		// Not an ATS host: guessing an employer from the path would be wrong.
-		"https://www.docker.com/careers/staff-backend-engineer": "",
+		"https://www.contoso.com/careers/staff-backend-engineer": "",
 		"https://example.com": "",
 		"not a url at all":    "",
 	}
@@ -30,8 +30,8 @@ func TestSplitPageTitle(t *testing.T) {
 	cases := []struct {
 		in, title, company string
 	}{
-		{"Job Application for Staff+ Software Engineer, Developer Productivity at Anthropic",
-			"Staff+ Software Engineer, Developer Productivity", "Anthropic"},
+		{"Job Application for Staff+ Software Engineer, Developer Productivity at Northwind",
+			"Staff+ Software Engineer, Developer Productivity", "Northwind"},
 		{"Senior Backend Engineer - Stripe", "Senior Backend Engineer", "Stripe"},
 		{"Platform Engineer | Datadog", "Platform Engineer", "Datadog"},
 		{"Apply for Site Reliability Engineer at Cloudflare", "Site Reliability Engineer", "Cloudflare"},

@@ -394,7 +394,7 @@ func metaTags(root *html.Node) map[string]string {
 }
 
 // atsPathCompany maps an applicant-tracking host to the path segment holding
-// the employer slug: job-boards.greenhouse.io/anthropic/jobs/123 -> "anthropic".
+// the employer slug: job-boards.greenhouse.io/northwind/jobs/123 -> "northwind".
 var atsPathCompany = map[string]int{
 	"job-boards.greenhouse.io":    0,
 	"boards.greenhouse.io":        0,
