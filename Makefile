@@ -11,6 +11,9 @@ DB      ?= $(HOME)/.resumed/resumed.db
 OUT     ?= $(HOME)/.resumed/jobs
 ADDR    ?= 127.0.0.1:7777
 GOFILES := $(shell find . -name '*.go' -not -path './bin/*')
+# go:embed compiles templates and static assets into the binary, so editing
+# one of them changes the build output with no .go file touched.
+ASSETS  := $(shell find internal/web/templates internal/web/static internal/render -type f)
 
 .DEFAULT_GOAL := help
 
@@ -26,7 +29,7 @@ help:
 ## build: compile the binary to bin/resumed
 build: $(BIN)
 
-$(BIN): $(GOFILES) go.mod go.sum
+$(BIN): $(GOFILES) $(ASSETS) go.mod go.sum
 	go build -o $(BIN) ./cmd/resumed
 
 ## serve: run the web UI (Ctrl-C to stop)
