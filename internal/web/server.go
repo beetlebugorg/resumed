@@ -909,6 +909,48 @@ func (s *server) showResume(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// downloadName builds the filename a browser offers in its save dialog. The
+// default is the URL's last segment, which for these routes is "pdf", so every
+// saved application arrives as pdf.pdf with no way to tell one from another.
+// Naming it for the candidate and the job means a folder of downloads is
+// readable without opening anything.
+func downloadName(profileName, kind string, job *store.Job) string {
+	parts := []string{app.Slug(profileName), kind}
+	if job != nil {
+		if job.Company != "" {
+			parts = append(parts, app.Slug(job.Company))
+		}
+		if job.Title != "" {
+			parts = append(parts, app.Slug(job.Title))
+		}
+	}
+	var keep []string
+	for _, p := range parts {
+		if p != "" {
+			keep = append(keep, p)
+		}
+	}
+	return strings.Join(keep, "-") + ".pdf"
+}
+
+// servePDF writes a PDF with a filename the browser will use. "inline" keeps
+// the browser preview; "attachment" would force a download instead.
+func (s *server) servePDF(w http.ResponseWriter, r *http.Request, path, name string) {
+	f, err := os.Open(path)
+	if err != nil {
+		http.Error(w, "PDF missing on disk: "+err.Error(), http.StatusNotFound)
+		return
+	}
+	defer f.Close()
+	st, err := f.Stat()
+	if fail(w, err) {
+		return
+	}
+	w.Header().Set("Content-Type", "application/pdf")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", name))
+	http.ServeContent(w, r, name, st.ModTime(), f)
+}
+
 func (s *server) resumePDF(w http.ResponseWriter, r *http.Request) {
 	id, err := pathID(r, "id")
 	if fail(w, err) {
@@ -923,18 +965,9 @@ func (s *server) resumePDF(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no PDF for this version — render it first", http.StatusNotFound)
 		return
 	}
-	f, err := os.Open(res.PDFPath)
-	if err != nil {
-		http.Error(w, "PDF missing on disk: "+err.Error(), http.StatusNotFound)
-		return
-	}
-	defer f.Close()
-	st, err := f.Stat()
-	if fail(w, err) {
-		return
-	}
-	w.Header().Set("Content-Type", "application/pdf")
-	http.ServeContent(w, r, fmt.Sprintf("resume-v%d.pdf", res.Version), st.ModTime(), f)
+	job, _ := s.app.Store.GetJob(res.JobID)
+	profile, _ := s.app.Store.GetProfile()
+	s.servePDF(w, r, res.PDFPath, downloadName(profile.Name, "resume", job))
 }
 
 func (s *server) coverPDF(w http.ResponseWriter, r *http.Request) {
@@ -951,18 +984,9 @@ func (s *server) coverPDF(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no PDF for this cover letter — render it first", http.StatusNotFound)
 		return
 	}
-	f, err := os.Open(c.PDFPath)
-	if err != nil {
-		http.Error(w, "PDF missing on disk: "+err.Error(), http.StatusNotFound)
-		return
-	}
-	defer f.Close()
-	st, err := f.Stat()
-	if fail(w, err) {
-		return
-	}
-	w.Header().Set("Content-Type", "application/pdf")
-	http.ServeContent(w, r, fmt.Sprintf("cover-letter-v%d.pdf", c.Version), st.ModTime(), f)
+	job, _ := s.app.Store.GetJob(c.JobID)
+	profile, _ := s.app.Store.GetProfile()
+	s.servePDF(w, r, c.PDFPath, downloadName(profile.Name, "cover-letter", job))
 }
 
 func (s *server) coverTypst(w http.ResponseWriter, r *http.Request) {
@@ -1022,14 +1046,9 @@ func (s *server) resumeSentPDF(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no sent copy was captured for this resume", http.StatusNotFound)
 		return
 	}
-	f, err := os.Open(res.SentPDFPath)
-	if err != nil {
-		http.Error(w, "sent PDF missing on disk: "+err.Error(), http.StatusNotFound)
-		return
-	}
-	defer f.Close()
-	w.Header().Set("Content-Type", "application/pdf")
-	http.ServeContent(w, r, "resume.sent.pdf", time.Time{}, f)
+	job, _ := s.app.Store.GetJob(res.JobID)
+	profile, _ := s.app.Store.GetProfile()
+	s.servePDF(w, r, res.SentPDFPath, downloadName(profile.Name, "resume-as-sent", job))
 }
 
 func (s *server) resumeTypst(w http.ResponseWriter, r *http.Request) {
