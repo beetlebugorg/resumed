@@ -360,6 +360,8 @@ type jobRow struct {
 	Job      store.Job
 	Href     string
 	Selected bool
+	// Pay is the range read out of the posting, empty when it quotes none.
+	Pay string
 }
 
 // jobGroup holds the rows for one status, used only when sorting by status.
@@ -397,7 +399,12 @@ func buildJobList(jobs []store.Job, lq listQuery, selected int64) jobListView {
 
 	row := func(j store.Job) jobRow {
 		path := fmt.Sprintf("/jobs/%d", j.ID)
-		return jobRow{Job: j, Href: lq.href(path, ""), Selected: j.ID == selected}
+		return jobRow{
+			Job:      j,
+			Href:     lq.href(path, ""),
+			Selected: j.ID == selected,
+			Pay:      salaryRange(j.Description),
+		}
 	}
 
 	switch lq.Sort {

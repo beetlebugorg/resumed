@@ -32,7 +32,10 @@
      hx-get="{{.Href}}" hx-target="#job-pane" hx-swap="outerHTML" hx-push-url="true">
     <span class="pip pip-{{.Job.Status}}" aria-hidden="true"></span>
     <span class="job-row-text">
-      <span class="job-row-company">{{if .Job.Company}}{{.Job.Company}}{{else}}untitled{{end}}</span>
+      <span class="job-row-top">
+        <span class="job-row-company">{{if .Job.Company}}{{.Job.Company}}{{else}}untitled{{end}}</span>
+        {{with .Pay}}<span class="job-row-pay">{{.}}</span>{{end}}
+      </span>
       <span class="job-row-title">{{.Job.Title}}</span>
       <span class="job-row-meta">{{.Job.Status}} · {{briefDate .Job.UpdatedAt}}</span>
     </span>

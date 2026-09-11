@@ -884,6 +884,24 @@ main.full {
 }
 
 .job-row-company { font-weight: 600; font-size: 0.9rem; }
+
+/* The pay range shares the company's line and holds the right edge, so adding
+   it costs the row no height. The company clips into it when it runs long. */
+.job-row-top {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.job-row-top .job-row-company { flex: 1; min-width: 0; }
+
+.job-row-pay {
+  flex: 0 0 auto;
+  font-size: 0.76rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
 .job-row-title { font-size: 0.85rem; color: var(--text); opacity: 0.85; }
 .job-row-meta { font-size: 0.76rem; color: var(--muted); margin-top: 0.1rem; }
 
