@@ -25,9 +25,18 @@ ATS-hardening choices vs. the original template:
   author: "",
   location: "",
   contacts: (),
+  title: "",
+  keywords: (),
   body,
 ) = {
-  set document(author: author, title: author)
+  // Document metadata is how a PDF found later is traced back to the render
+  // that produced it. keywords carries the resume id, the job, the render
+  // time, and a hash of the source.
+  set document(
+    author: author,
+    title: if title != "" { title } else { author },
+    keywords: keywords,
+  )
 
   // Standard, ATS-safe font with sane fallbacks.
   set text(

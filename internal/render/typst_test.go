@@ -283,3 +283,54 @@ func TestShortHighlightsDoNotBreak(t *testing.T) {
 		t.Errorf("long phrase lost its emphasis: %q", got)
 	}
 }
+
+// TestContentHashIsStableAcrossRenders checks the reason the render time and
+// the hash are both written as placeholders before hashing: two renders of the
+// same document produce the same content hash, so the value identifies the
+// document rather than the moment it was built.
+func TestContentHashIsStableAcrossRenders(t *testing.T) {
+	doc := nastyDoc()
+	doc.Resume = &store.Resume{ID: 42}
+	doc.Job = &store.Job{ID: 7, Company: "Example & Co", Title: "Staff Engineer"}
+
+	first := Typst(doc)
+	second := Typst(doc)
+
+	hashOf := func(src string) string {
+		i := strings.Index(src, "content:")
+		if i < 0 {
+			t.Fatalf("no content hash in source")
+		}
+		return src[i : i+len("content:")+16]
+	}
+	if hashOf(first) != hashOf(second) {
+		t.Errorf("hash changed between renders: %s vs %s", hashOf(first), hashOf(second))
+	}
+	if strings.Contains(first, hashPlaceholder) || strings.Contains(first, timePlaceholder) {
+		t.Error("a placeholder survived into the output")
+	}
+
+	// Changing the document changes the hash.
+	doc.Summary = doc.Summary + " Extra sentence."
+	if hashOf(Typst(doc)) == hashOf(first) {
+		t.Error("hash did not change when the document did")
+	}
+}
+
+// TestMetadataNamesTheJob covers what the keywords are for: finding the render
+// behind a PDF someone sent weeks ago.
+func TestMetadataNamesTheJob(t *testing.T) {
+	doc := nastyDoc()
+	doc.Resume = &store.Resume{ID: 42}
+	doc.Job = &store.Job{ID: 7, Company: "Example & Co", Title: "Staff Engineer"}
+	src := Typst(doc)
+
+	for _, want := range []string{"resume:42", "job:7", "company:Example & Co", "role:Staff Engineer"} {
+		if !strings.Contains(src, want) {
+			t.Errorf("keywords missing %q", want)
+		}
+	}
+	if !strings.Contains(src, `title: "Pat Example - Resume - Example & Co - Staff Engineer"`) {
+		t.Error("title does not name the candidate, the document, and the job")
+	}
+}

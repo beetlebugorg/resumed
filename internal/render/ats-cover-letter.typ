@@ -28,9 +28,17 @@ when they arrive together, but nothing else.
   recipient: (),
   greeting: "",
   closing: "",
+  title: "",
+  keywords: (),
   body,
 ) = {
-  set document(author: author, title: author + " Cover Letter")
+  // See ats-resume.typ: keywords carries the identifiers that trace this file
+  // back to the render that produced it.
+  set document(
+    author: author,
+    title: if title != "" { title } else { author + " Cover Letter" },
+    keywords: keywords,
+  )
 
   set text(
     font: ("Arial", "Helvetica", "Helvetica Neue"),

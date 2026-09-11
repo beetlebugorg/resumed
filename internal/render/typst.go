@@ -4,12 +4,15 @@ package render
 
 import (
 	"bytes"
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -269,7 +272,14 @@ func Typst(doc *store.Document) string {
 			fmt.Fprintf(&b, "    [%s],\n", esc(c.Value))
 		}
 	}
-	b.WriteString("  ),\n)\n\n")
+	b.WriteString("  ),\n")
+	var resumeID int64
+	if doc.Resume != nil {
+		resumeID = doc.Resume.ID
+	}
+	title, keywords := docMeta(doc.Profile.Name, "resume", "Resume", doc.Job, resumeID)
+	writeMeta(&b, title, keywords)
+	b.WriteString(")\n\n")
 
 	if s := strings.TrimSpace(doc.Summary); s != "" {
 		b.WriteString("= Summary\n\n")
@@ -365,7 +375,7 @@ func Typst(doc *store.Document) string {
 		}
 	}
 
-	return b.String()
+	return stamp(b.String(), time.Now())
 }
 
 // LetterDate renders the stored timestamp as "2 January 2006" for the letter
@@ -442,6 +452,8 @@ func CoverLetterTypst(p store.Profile, contacts []store.Contact, job *store.Job,
 	if c.Closing != "" {
 		fmt.Fprintf(&b, "  closing: [%s],\n", esc(c.Closing))
 	}
+	title, keywords := docMeta(p.Name, "cover-letter", "Cover Letter", job, c.ID)
+	writeMeta(&b, title, keywords)
 	b.WriteString(")\n\n")
 
 	for _, para := range c.Paragraphs() {
@@ -449,7 +461,7 @@ func CoverLetterTypst(p store.Profile, contacts []store.Contact, job *store.Job,
 		b.WriteString("\n\n")
 	}
 
-	return b.String()
+	return stamp(b.String(), time.Now())
 }
 
 // ErrNoTypst reports that the typst binary is not on PATH. Callers treat this
@@ -498,5 +510,63 @@ func PDF(typPath string) (string, error) {
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("typst compile failed: %w\n%s", err, stderr.String())
 	}
+	// A PDF without /Producer is still a valid PDF, so a failure here does not
+	// fail the render.
+	_ = setProducer(pdfPath, Producer)
 	return pdfPath, nil
+}
+
+// ---------------------------------------------------------------- provenance
+
+// Placeholders stand in for the two metadata values that cannot be known while
+// the source is being written: the content hash cannot hash a string it is
+// already part of, and the render time changes on every run, which would make
+// the hash differ for identical documents. Both are substituted afterwards, and
+// the hash is taken over the source while both are still placeholders. Two
+// renders of the same document therefore produce the same content hash.
+const (
+	hashPlaceholder = "0000000000000000"
+	timePlaceholder = "0000-00-00T00:00:00Z"
+)
+
+// stamp substitutes the real hash and render time into a finished source.
+func stamp(src string, now time.Time) string {
+	sum := sha256.Sum256([]byte(src))
+	src = strings.Replace(src, hashPlaceholder, hex.EncodeToString(sum[:8]), 1)
+	return strings.Replace(src, timePlaceholder, now.UTC().Format(time.RFC3339), 1)
+}
+
+// docMeta builds the title and keywords written into the PDF. The keywords are
+// key:value pairs so a reader can tell what each one is without a legend.
+func docMeta(name, kind, display string, job *store.Job, id int64) (string, []string) {
+	title := name + " - " + display
+	keywords := []string{
+		"resumed",
+		kind + ":" + strconv.FormatInt(id, 10),
+		"rendered:" + timePlaceholder,
+		"content:" + hashPlaceholder,
+	}
+	if job != nil {
+		// Job.Label joins with an em dash, which reads oddly next to the
+		// hyphens already in the title.
+		title += " - " + labelForComment(job.Label())
+		keywords = append(keywords, "job:"+strconv.FormatInt(job.ID, 10))
+		if job.Company != "" {
+			keywords = append(keywords, "company:"+job.Company)
+		}
+		if job.Title != "" {
+			keywords = append(keywords, "role:"+job.Title)
+		}
+	}
+	return title, keywords
+}
+
+// writeMeta emits the title and keywords arguments shared by both templates.
+func writeMeta(b *strings.Builder, title string, keywords []string) {
+	fmt.Fprintf(b, "  title: %s,\n", quote(title))
+	b.WriteString("  keywords: (\n")
+	for _, k := range keywords {
+		fmt.Fprintf(b, "    %s,\n", quote(k))
+	}
+	b.WriteString("  ),\n")
 }
