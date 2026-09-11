@@ -183,10 +183,73 @@ type CoverLetter struct {
 	Body      string `json:"body"`
 	Closing   string `json:"closing,omitempty"`
 	Rationale string `json:"rationale,omitempty"`
-	Typst     string `json:"-"`
-	PDFPath   string `json:"pdf_path,omitempty"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
+	// Links are printed under the signature.
+	Links     []CoverLink `json:"links,omitempty"`
+	Typst     string      `json:"-"`
+	PDFPath   string      `json:"pdf_path,omitempty"`
+	CreatedAt string      `json:"created_at"`
+	UpdatedAt string      `json:"updated_at"`
+}
+
+// CoverLink is one line under a letter's signature. Label is the link text,
+// usually a project name, and Note is the description printed after it.
+type CoverLink struct {
+	Label string `json:"label,omitempty"`
+	URL   string `json:"url"`
+	Note  string `json:"note,omitempty"`
+}
+
+// Href is the address to link to. A stored link is written the way it should
+// read on the page, without a scheme, so the scheme is added here. Both the PDF
+// renderer and the web template use this, which keeps one rule in one place and
+// keeps html/template out of an ambiguous URL context.
+func (l CoverLink) Href() string {
+	if strings.Contains(l.URL, "://") {
+		return l.URL
+	}
+	return "https://" + l.URL
+}
+
+// joinLinks and splitLinks move links between the slice the program uses and
+// the "label|url" lines the column holds. A link with no URL is dropped, since
+// a label on its own points nowhere.
+func joinLinks(links []CoverLink) string {
+	var lines []string
+	for _, l := range links {
+		url := strings.TrimSpace(l.URL)
+		if url == "" {
+			continue
+		}
+		lines = append(lines, strings.TrimSpace(l.Label)+"|"+url+"|"+strings.TrimSpace(l.Note))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func splitLinks(s string) []CoverLink {
+	var out []CoverLink
+	for _, line := range strings.Split(s, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "|", 3)
+		var label, url, note string
+		switch len(parts) {
+		case 1:
+			url = parts[0]
+		case 2:
+			label, url = parts[0], parts[1]
+		default:
+			label, url, note = parts[0], parts[1], parts[2]
+		}
+		if url = strings.TrimSpace(url); url != "" {
+			out = append(out, CoverLink{
+				Label: strings.TrimSpace(label),
+				URL:   url,
+				Note:  strings.TrimSpace(note),
+			})
+		}
+	}
+	return out
 }
 
 // Paragraphs splits the stored body on blank lines, which is how the letter is

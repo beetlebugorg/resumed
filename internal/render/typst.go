@@ -452,6 +452,23 @@ func CoverLetterTypst(p store.Profile, contacts []store.Contact, job *store.Job,
 	if c.Closing != "" {
 		fmt.Fprintf(&b, "  closing: [%s],\n", esc(c.Closing))
 	}
+	// Real links, so the URL is both visible and clickable.
+	if len(c.Links) > 0 {
+		b.WriteString("  links: (\n")
+		for _, l := range c.Links {
+			text := l.Label
+			if text == "" {
+				text = l.URL
+			}
+			fmt.Fprintf(&b, "    [#link(%s)[%s]", quote(l.Href()), esc(text))
+			if l.Note != "" {
+				fmt.Fprintf(&b, ", %s", esc(l.Note))
+			}
+			b.WriteString("],\n")
+		}
+		b.WriteString("  ),\n")
+	}
+
 	title, keywords := docMeta(p.Name, "cover-letter", "Cover Letter", job, c.ID)
 	writeMeta(&b, title, keywords)
 	b.WriteString(")\n\n")

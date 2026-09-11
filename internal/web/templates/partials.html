@@ -343,5 +343,13 @@
     <p class="letter-closing">{{.}}</p>
     <p class="letter-signature">{{$.Profile.Name}}</p>
   {{end}}
+
+  {{with .Letter.Links}}
+    <div class="letter-links">
+      {{range .}}
+        <div><a href="{{.Href}}" target="_blank">{{if .Label}}{{.Label}}{{else}}{{.URL}}{{end}}</a>{{with .Note}}, {{.}}{{end}}</div>
+      {{end}}
+    </div>
+  {{end}}
 </article>
 {{end}}

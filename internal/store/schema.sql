@@ -183,6 +183,10 @@ CREATE TABLE IF NOT EXISTS cover_letters (
     greeting   TEXT NOT NULL DEFAULT '', -- e.g. "Dear Render Engineering Team,"
     body       TEXT NOT NULL DEFAULT '', -- paragraphs separated by blank lines
     closing    TEXT NOT NULL DEFAULT '', -- e.g. "Sincerely,"
+    -- Links printed under the signature, one "label|url" per line. Stored
+    -- apart from the body because the renderer makes them real links, and
+    -- because a URL inside a paragraph is prose the reader has to parse.
+    links      TEXT NOT NULL DEFAULT '',
     rationale  TEXT NOT NULL DEFAULT '', -- why this argument, from which facts
     typst      TEXT NOT NULL DEFAULT '',
     pdf_path   TEXT NOT NULL DEFAULT '',

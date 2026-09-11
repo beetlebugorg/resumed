@@ -557,11 +557,12 @@ type GetResumeOutput struct {
 }
 
 type SaveCoverLetterInput struct {
-	JobID     int64  `json:"job_id"`
-	Body      string `json:"body" jsonschema:"the letter itself; separate paragraphs with a blank line. Three or four short paragraphs beats one long one."`
-	Greeting  string `json:"greeting,omitempty" jsonschema:"e.g. 'Dear Render Engineering Team,'. Do not invent a hiring manager's name."`
-	Closing   string `json:"closing,omitempty" jsonschema:"e.g. 'Sincerely,'. The name is added automatically."`
-	Rationale string `json:"rationale,omitempty" jsonschema:"which facts this letter leans on and why that argument suits this posting; stored for later review"`
+	JobID     int64             `json:"job_id"`
+	Body      string            `json:"body" jsonschema:"the letter itself; separate paragraphs with a blank line. Three or four short paragraphs beats one long one."`
+	Greeting  string            `json:"greeting,omitempty" jsonschema:"e.g. 'Dear Render Engineering Team,'. Do not invent a hiring manager's name."`
+	Closing   string            `json:"closing,omitempty" jsonschema:"e.g. 'Sincerely,'. The name is added automatically."`
+	Links     []store.CoverLink `json:"links,omitempty" jsonschema:"links printed under the signature. label is the link text, usually a project name; note is the description printed after it; url is the address. Use for a portfolio or repositories the letter refers to, rather than putting bare URLs in a paragraph."`
+	Rationale string            `json:"rationale,omitempty" jsonschema:"which facts this letter leans on and why that argument suits this posting; stored for later review"`
 }
 
 type SaveCoverLetterOutput struct {
@@ -697,7 +698,7 @@ func registerCoverLetterTools(s *mcp.Server, a *app.App) {
 		}
 		letter, err := a.Store.SaveCoverLetter(store.CoverLetter{
 			JobID: in.JobID, Body: in.Body, Greeting: in.Greeting,
-			Closing: in.Closing, Rationale: in.Rationale,
+			Closing: in.Closing, Links: in.Links, Rationale: in.Rationale,
 		})
 		if err != nil {
 			return fail[SaveCoverLetterOutput]("save cover letter: %w", err)

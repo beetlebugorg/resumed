@@ -28,6 +28,7 @@ when they arrive together, but nothing else.
   recipient: (),
   greeting: "",
   closing: "",
+  links: (),
   title: "",
   keywords: (),
   body,
@@ -92,5 +93,15 @@ when they arrive together, but nothing else.
   if closing != "" {
     block(above: 1.5em, below: 2.6em)[#closing]
     block[#author]
+  }
+
+  // Under the signature, where a reader looks after finishing rather than
+  // while reading. Smaller than body text so the letter still ends on the
+  // name.
+  if links.len() > 0 {
+    block(above: 1.6em)[
+      #set text(size: 9.2pt)
+      #for l in links [#l \ ]
+    ]
   }
 }

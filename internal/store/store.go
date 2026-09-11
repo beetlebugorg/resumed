@@ -74,6 +74,15 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	// Signature links arrived after the cover_letters table did.
+	if has, err := hasColumn(db, "cover_letters", "links"); err != nil {
+		return err
+	} else if !has {
+		if _, err := db.Exec(`ALTER TABLE cover_letters ADD COLUMN links TEXT NOT NULL DEFAULT ''`); err != nil {
+			return fmt.Errorf("add links to cover_letters: %w", err)
+		}
+	}
+
 	// The sent snapshot arrived after the resumes table did.
 	for _, col := range []string{"sent_typst", "sent_pdf_path", "sent_at"} {
 		has, err := hasColumn(db, "resumes", col)
@@ -957,12 +966,14 @@ func (s *Store) DeleteResume(id int64) error {
 
 // ------------------------------------------------------------ cover letters
 
-const coverLetterCols = `id, job_id, version, greeting, body, closing, rationale, typst, pdf_path, created_at, updated_at`
+const coverLetterCols = `id, job_id, version, greeting, body, closing, links, rationale, typst, pdf_path, created_at, updated_at`
 
 func scanCoverLetter(sc rowScanner) (CoverLetter, error) {
 	var c CoverLetter
+	var links string
 	err := sc.Scan(&c.ID, &c.JobID, &c.Version, &c.Greeting, &c.Body, &c.Closing,
-		&c.Rationale, &c.Typst, &c.PDFPath, &c.CreatedAt, &c.UpdatedAt)
+		&links, &c.Rationale, &c.Typst, &c.PDFPath, &c.CreatedAt, &c.UpdatedAt)
+	c.Links = splitLinks(links)
 	return c, err
 }
 
@@ -977,18 +988,19 @@ func (s *Store) SaveCoverLetter(c CoverLetter) (*CoverLetter, error) {
 		return nil, err
 	}
 	_, err := s.db.Exec(`
-		INSERT INTO cover_letters (job_id, version, greeting, body, closing, rationale)
-		VALUES (?, 1, ?, ?, ?, ?)
+		INSERT INTO cover_letters (job_id, version, greeting, body, closing, links, rationale)
+		VALUES (?, 1, ?, ?, ?, ?, ?)
 		ON CONFLICT(job_id) DO UPDATE SET
 			version    = cover_letters.version + 1,
 			greeting   = excluded.greeting,
 			body       = excluded.body,
 			closing    = excluded.closing,
+			links      = excluded.links,
 			rationale  = excluded.rationale,
 			typst      = '',
 			pdf_path   = '',
 			updated_at = datetime('now')`,
-		c.JobID, c.Greeting, c.Body, c.Closing, c.Rationale)
+		c.JobID, c.Greeting, c.Body, c.Closing, joinLinks(c.Links), c.Rationale)
 	if err != nil {
 		return nil, err
 	}
