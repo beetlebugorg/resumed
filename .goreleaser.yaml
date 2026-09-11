@@ -38,6 +38,9 @@ brews:
       owner: beetlebugorg
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    # The tap keeps formulas in Formula/ and casks in Casks/. Without this
+    # goreleaser writes to the repository root.
+    directory: Formula
     homepage: https://github.com/beetlebugorg/resumed
     description: Tailored resumes and cover letters built from a fact base
     license: MIT
