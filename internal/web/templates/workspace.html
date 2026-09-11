@@ -1,0 +1,45 @@
+{{/*
+  The jobs screen. A filtered list on the left, one job on the right. The
+  address bar holds both halves, so a reload restores the same view.
+*/}}
+{{define "content"}}
+<div class="workspace">
+  <aside class="sidebar">
+    {{/* A div rather than a form. Each control requests on its own, and a
+         form submits on Enter in the search box. */}}
+    <div id="list-controls" class="list-controls">
+      <div class="row">
+        <input type="search" name="q" value="{{.List.Query.Q}}"
+               placeholder="Search jobs…" autocomplete="off" aria-label="Search jobs"
+               hx-get="/jobs/list"
+               hx-trigger="input changed delay:200ms, search"
+               hx-target="#job-list"
+               hx-swap="outerHTML"
+               hx-include="#list-controls">
+        <a class="btn new-job" href="/" title="Add a job" aria-label="Add a job">+</a>
+      </div>
+      <div class="row">
+        <select name="status" aria-label="Filter by status"
+                hx-get="/jobs/list" hx-target="#job-list" hx-swap="outerHTML" hx-include="#list-controls">
+          <option value="">all statuses</option>
+          {{$f := .List.Query.Status}}
+          {{range statuses}}
+            <option value="{{.}}" {{if eq . $f}}selected{{end}}>{{.}}</option>
+          {{end}}
+        </select>
+        <select name="sort" aria-label="Sort jobs"
+                hx-get="/jobs/list" hx-target="#job-list" hx-swap="outerHTML" hx-include="#list-controls">
+          {{$s := .List.Query.Sort}}
+          <option value="recent" {{if eq $s "recent"}}selected{{end}}>recent</option>
+          <option value="company" {{if eq $s "company"}}selected{{end}}>company</option>
+          <option value="status" {{if eq $s "status"}}selected{{end}}>by status</option>
+        </select>
+      </div>
+    </div>
+
+    {{template "job-list" .List}}
+  </aside>
+
+  {{template "job-pane" .Pane}}
+</div>
+{{end}}

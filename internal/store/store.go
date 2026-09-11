@@ -823,6 +823,17 @@ func (s *Store) DeleteJobNote(id int64) error {
 	return err
 }
 
+// JobNoteOwner returns the job a note belongs to. Deleting a note redraws
+// that job's note list, and the row is gone by then.
+func (s *Store) JobNoteOwner(id int64) (int64, error) {
+	var jobID int64
+	err := s.db.QueryRow(`SELECT job_id FROM job_notes WHERE id = ?`, id).Scan(&jobID)
+	if err == sql.ErrNoRows {
+		return 0, fmt.Errorf("note %d not found", id)
+	}
+	return jobID, err
+}
+
 // ----------------------------------------------------------------- questions
 
 func (s *Store) AddQuestion(q Question) (int64, error) {

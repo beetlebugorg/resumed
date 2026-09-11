@@ -4,6 +4,15 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{.Title}} · resumed</title>
+  <script>
+    // Runs before the stylesheet to avoid a flash of the wrong scheme.
+    (function () {
+      try {
+        var t = localStorage.getItem('resumed-theme');
+        if (t === 'day' || t === 'night') document.documentElement.dataset.theme = t;
+      } catch (e) {}
+    })();
+  </script>
   <link rel="stylesheet" href="/static/style.css">
   <script src="/static/htmx.min.js" defer></script>
 </head>
@@ -17,6 +26,11 @@
       </a>
       <a href="/facts" {{if eq .Nav "facts"}}class="active"{{end}}>Facts</a>
     </nav>
+
+    {{/* Day, night, or follow the system. CSS holds the label so it is right
+         on the first frame. The script advances the setting. */}}
+    <button type="button" id="theme-toggle" class="theme-toggle"
+            title="Chart scheme: day, night, or follow the system"></button>
   </header>
 
   <!-- Server-sent messages land here via the HX-Trigger "flash" event. -->
@@ -24,11 +38,43 @@
     {{with .Flash}}<div class="flash">{{.}}</div>{{end}}
   </div>
 
-  <main>
+  <main{{if .Wide}} class="full"{{end}}>
     {{block "content" .}}{{end}}
   </main>
 
   <script>
+    // Day, then night, then back to following the system. The third state
+    // stores no preference, so a machine that changes its own appearance is
+    // followed again.
+    (function () {
+      var btn = document.getElementById('theme-toggle');
+      var root = document.documentElement;
+      var order = ['day', 'night', ''];
+
+      function label() {
+        var t = root.dataset.theme;
+        btn.setAttribute('aria-label',
+          'Chart scheme: ' + (t === 'day' ? 'day' : t === 'night' ? 'night' : 'following the system')
+          + '. Click to change.');
+      }
+
+      btn.addEventListener('click', function () {
+        var next = order[(order.indexOf(root.dataset.theme || '') + 1) % order.length];
+        if (next) {
+          root.dataset.theme = next;
+        } else {
+          delete root.dataset.theme;
+        }
+        try {
+          if (next) localStorage.setItem('resumed-theme', next);
+          else localStorage.removeItem('resumed-theme');
+        } catch (e) {}
+        label();
+      });
+
+      label();
+    })();
+
     // A single listener turns any HX-Trigger {"flash": "..."} into a banner.
     document.body.addEventListener('flash', function (e) {
       const host = document.getElementById('flash-host');

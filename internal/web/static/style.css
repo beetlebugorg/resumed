@@ -1,31 +1,159 @@
 /* resumed — a small, quiet interface. Two columns at most, no chrome that
-   isn't doing work. */
+   isn't doing work.
 
+   The palette is S-52 depth shading, the colouring a marine chart uses for
+   water: pale where it is deep and safe, saturating as it shoals. Here the
+   ground is deep water and the documents float on it as white paper, so the
+   thing you came to read is the brightest object on screen.
+
+   Values come from the lookout-marine design system. The chart tokens
+   (DEPDW/DEPMD/DEPMS/DEPCN/CHGRD/NODTA) set the water, and its chrome tokens
+   set ink and accent. Night uses the DUSK ramp rather than NIGHT. Night's four
+   deepest bands are within a few units of each other, so the ramp stops
+   reading as a ladder on a screen at desk brightness.
+
+   Every foreground/background pair here clears WCAG AA, body text AAA. Check
+   before changing one. */
+
+/* Both schemes, defined once. Nothing below this block restates a colour, so
+   the day and night remaps further down cannot drift apart from these. */
 :root {
-  --bg: #fbfbfa;
-  --surface: #ffffff;
-  --border: #e4e2dd;
-  --text: #23211d;
-  --muted: #6f6b63;
-  --accent: #3a5a9b;
-  --accent-soft: #eef2fa;
-  --warn: #8a5a1a;
-  --warn-soft: #fdf4e6;
-  --radius: 8px;
+  --day-bg: #c9edff;            /* DEPDW, deep water, the page ground */
+  --day-panel: #eaf8ff;         /* chrome: topbar, sidebar */
+  --day-surface: #ffffff;       /* paper: documents, cards, inputs */
+  --day-border: #b3d6e9;
+  --day-rule: #768c97;          /* DEPCN, depth contour */
+  --day-text: #0f232f;
+  --day-muted: #4c5b63;         /* CHGRD */
+  --day-accent: #1b49c4;
+  --day-accent-soft: #dcf1ff;
+  --day-accent-contrast: #ffffff;
+  --day-hover: #c9edff;         /* DEPDW, the row under the pointer */
+  --day-select: #a7d9fb;        /* DEPMD, the open job, shoaled one band */
+  --day-ok: #136b4c;            /* ARPAT family: applied, interviewing, offer */
+  --day-ok-soft: #cfeade;
+  --day-off: #465862;           /* NODTA family: rejected, closed */
+  --day-off-soft: #dbe7ed;
+  --day-warn: #8a4a12;          /* CHCOR family */
+  --day-warn-soft: #fbe6d2;
+  --day-shadow-sm: 0 1px 2px rgb(15 35 47 / 0.07), 0 3px 10px rgb(15 35 47 / 0.06);
+  --day-shadow: 0 2px 4px rgb(15 35 47 / 0.07), 0 12px 32px rgb(15 35 47 / 0.11);
+  --day-edge-right: 4px 0 16px rgb(15 35 47 / 0.10);
+  --day-edge-down: 0 3px 14px rgb(15 35 47 / 0.09);
+
+  --night-bg: #0b1218;
+  --night-panel: #132029;       /* DEPMD, dusk, lifted off the ground */
+  --night-surface: #16242e;
+  --night-border: #24343f;
+  --night-rule: #4c5b63;        /* DEPCN, dusk */
+  --night-text: #dde4ea;
+  --night-muted: #8ca6b3;       /* CHWHT, dusk */
+  --night-accent: #7ea1f5;
+  --night-accent-soft: #1e3855;
+  --night-accent-contrast: #00344c;
+  --night-hover: #16242e;
+  --night-select: #1d3246;      /* DEPMS, dusk */
+  --night-ok: #6ec79a;
+  --night-ok-soft: #12281d;
+  --night-off: #93aebb;         /* NODTA, dusk */
+  --night-off-soft: #1b242c;
+  --night-warn: #e6b673;
+  --night-warn-soft: #2b2114;
+  --night-shadow-sm: 0 1px 2px rgb(0 0 0 / 0.35), 0 3px 10px rgb(0 0 0 / 0.28);
+  --night-shadow: 0 2px 6px rgb(0 0 0 / 0.4), 0 14px 36px rgb(0 0 0 / 0.38);
+  --night-edge-right: 4px 0 16px rgb(0 0 0 / 0.45);
+  --night-edge-down: 0 3px 14px rgb(0 0 0 / 0.4);
+
+  /* Rounded enough that the interface reads as soft-edged rather than ruled.
+     Sections inside a document keep their rules, because the document is a
+     facsimile of the PDF. */
+  --radius: 14px;
+  --radius-sm: 9px;
+  --radius-row: 10px;
 }
 
+/* Day, the default. */
+:root {
+  color-scheme: light;
+  --bg: var(--day-bg);
+  --panel: var(--day-panel);
+  --surface: var(--day-surface);
+  --border: var(--day-border);
+  --rule: var(--day-rule);
+  --text: var(--day-text);
+  --muted: var(--day-muted);
+  --accent: var(--day-accent);
+  --accent-soft: var(--day-accent-soft);
+  --accent-contrast: var(--day-accent-contrast);
+  --hover: var(--day-hover);
+  --select: var(--day-select);
+  --ok: var(--day-ok);
+  --ok-soft: var(--day-ok-soft);
+  --off: var(--day-off);
+  --off-soft: var(--day-off-soft);
+  --warn: var(--day-warn);
+  --warn-soft: var(--day-warn-soft);
+  --shadow-sm: var(--day-shadow-sm);
+  --shadow: var(--day-shadow);
+  --edge-right: var(--day-edge-right);
+  --edge-down: var(--day-edge-down);
+}
+
+/* Follow the system, unless the reader has pinned the day scheme in the
+   topbar. A script sets data-theme on <html> before first paint. */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #16171a;
-    --surface: #1d1f23;
-    --border: #2f3339;
-    --text: #e6e4e0;
-    --muted: #9a978f;
-    --accent: #8fb0ee;
-    --accent-soft: #1f2733;
-    --warn: #e0b070;
-    --warn-soft: #2a2318;
+  :root:not([data-theme="day"]) {
+    color-scheme: dark;
+    --bg: var(--night-bg);
+    --panel: var(--night-panel);
+    --surface: var(--night-surface);
+    --border: var(--night-border);
+    --rule: var(--night-rule);
+    --text: var(--night-text);
+    --muted: var(--night-muted);
+    --accent: var(--night-accent);
+    --accent-soft: var(--night-accent-soft);
+    --accent-contrast: var(--night-accent-contrast);
+    --hover: var(--night-hover);
+    --select: var(--night-select);
+    --ok: var(--night-ok);
+    --ok-soft: var(--night-ok-soft);
+    --off: var(--night-off);
+    --off-soft: var(--night-off-soft);
+    --warn: var(--night-warn);
+    --warn-soft: var(--night-warn-soft);
+    --shadow-sm: var(--night-shadow-sm);
+    --shadow: var(--night-shadow);
+    --edge-right: var(--night-edge-right);
+    --edge-down: var(--night-edge-down);
   }
+}
+
+/* Pinning night has to win over a light system too. */
+:root[data-theme="night"] {
+  color-scheme: dark;
+  --bg: var(--night-bg);
+  --panel: var(--night-panel);
+  --surface: var(--night-surface);
+  --border: var(--night-border);
+  --rule: var(--night-rule);
+  --text: var(--night-text);
+  --muted: var(--night-muted);
+  --accent: var(--night-accent);
+  --accent-soft: var(--night-accent-soft);
+  --accent-contrast: var(--night-accent-contrast);
+  --hover: var(--night-hover);
+  --select: var(--night-select);
+  --ok: var(--night-ok);
+  --ok-soft: var(--night-ok-soft);
+  --off: var(--night-off);
+  --off-soft: var(--night-off-soft);
+  --warn: var(--night-warn);
+  --warn-soft: var(--night-warn-soft);
+  --shadow-sm: var(--night-shadow-sm);
+  --shadow: var(--night-shadow);
+    --edge-right: var(--night-edge-right);
+    --edge-down: var(--night-edge-down);
 }
 
 * { box-sizing: border-box; }
@@ -45,8 +173,8 @@ body {
   gap: 1.5rem;
   padding: 0 1.5rem;
   height: 52px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  box-shadow: var(--edge-down);
   position: sticky;
   top: 0;
   z-index: 10;
@@ -60,6 +188,24 @@ body {
 }
 
 .topbar nav { display: flex; gap: 1.25rem; }
+
+/* Day, night, or follow the system, cycled in that order. CSS generates the
+   label so the button is correct on the first frame, before the script runs. */
+.theme-toggle {
+  margin-left: auto;
+  padding: 0.3rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.theme-toggle:hover { color: var(--accent); border-color: var(--accent); }
+.theme-toggle::before { content: "Auto"; }
+:root[data-theme="day"] .theme-toggle::before { content: "Day"; }
+:root[data-theme="night"] .theme-toggle::before { content: "Night"; }
 
 .topbar nav a {
   color: var(--muted);
@@ -77,14 +223,12 @@ body {
   min-width: 18px;
   padding: 0 5px;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-contrast);
   border-radius: 9px;
   font-size: 0.72rem;
   text-align: center;
   line-height: 18px;
 }
-
-@media (prefers-color-scheme: dark) { .badge { color: #16171a; } }
 
 main {
   max-width: 860px;
@@ -106,33 +250,30 @@ a { color: var(--accent); }
 
 .card {
   background: var(--surface);
-  border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 1rem 1.15rem;
+  box-shadow: var(--shadow-sm);
+  padding: 1.15rem 1.3rem;
   margin-bottom: 0.75rem;
 }
 
-.card-link { display: block; text-decoration: none; color: inherit; }
-.card-link:hover { border-color: var(--accent); }
-
-.card-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 1rem;
+/* A toast rather than a banner. The workspace fills the window, so a message
+   in the document flow pushes a pane out of the way to appear. */
+#flash-host {
+  position: fixed;
+  top: 64px;
+  right: 1.25rem;
+  z-index: 40;
+  max-width: min(28rem, calc(100vw - 2.5rem));
 }
-
-.card-title { font-weight: 600; }
 
 .flash {
   background: var(--warn-soft);
-  border: 1px solid var(--border);
   border-left: 3px solid var(--warn);
   color: var(--warn);
   padding: 0.7rem 1rem;
   border-radius: var(--radius);
-  margin-bottom: 1.25rem;
   font-size: 0.9rem;
+  box-shadow: var(--shadow);
 }
 
 /* ------------------------------------------------------------------ status */
@@ -148,30 +289,33 @@ a { color: var(--accent); }
   white-space: nowrap;
 }
 
-.status-applied, .status-interviewing { background: #e8f2e8; color: #3a6b3a; }
-.status-offer { background: #e6f4ea; color: #1e6b3a; }
-.status-rejected, .status-closed { background: #f0eeea; color: #78736a; }
-
-@media (prefers-color-scheme: dark) {
-  .status-applied, .status-interviewing { background: #1e2a1e; color: #8fcf8f; }
-  .status-offer { background: #17301f; color: #7fd8a0; }
-  .status-rejected, .status-closed { background: #26282c; color: #8e8a82; }
-}
+.status-applied, .status-interviewing { background: var(--ok-soft); color: var(--ok); }
+.status-offer { background: var(--ok); color: var(--accent-contrast); font-weight: 600; }
+.status-rejected, .status-closed { background: var(--off-soft); color: var(--off); }
 
 /* ------------------------------------------------------------------- forms */
 
 form { margin: 0; }
 
-input[type=text], input[type=url], textarea, select {
+input[type=text], input[type=url], input[type=search], textarea, select {
   width: 100%;
-  padding: 0.55rem 0.7rem;
+  padding: 0.55rem 0.75rem;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--text);
   font: inherit;
   font-size: 0.92rem;
 }
+
+/* Safari renders a search field as a pill and overrides padding and
+   background unless the platform appearance is switched off first. */
+input[type=search] {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+::placeholder { color: var(--muted); opacity: 1; }
 
 textarea { resize: vertical; min-height: 4.5rem; line-height: 1.5; }
 
@@ -182,9 +326,9 @@ input:focus, textarea:focus, select:focus {
 }
 
 button {
-  padding: 0.5rem 0.95rem;
+  padding: 0.5rem 1rem;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--text);
   font: inherit;
@@ -197,12 +341,10 @@ button:hover { border-color: var(--accent); color: var(--accent); }
 button.primary {
   background: var(--accent);
   border-color: var(--accent);
-  color: #fff;
+  color: var(--accent-contrast);
 }
 
-button.primary:hover { filter: brightness(1.08); color: #fff; }
-
-@media (prefers-color-scheme: dark) { button.primary { color: #16171a; } }
+button.primary:hover { filter: brightness(1.08); color: var(--accent-contrast); }
 
 button.link {
   border: none;
@@ -264,42 +406,82 @@ details.add-manual > *:not(summary) { margin-top: 0.6rem; }
   line-height: 1.6;
   max-height: 22rem;
   overflow-y: auto;
-  padding: 0.9rem 1.1rem;
+  padding: 1rem 1.2rem;
   background: var(--surface);
-  border: 1px solid var(--border);
   border-radius: var(--radius);
+  box-shadow: var(--shadow-sm);
+}
+
+/* Each note is a card with room to read rather than a line in a table. The
+   rail on the left marks who wrote it. */
+.notes {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  max-width: 78ch;
 }
 
 .note {
-  border-left: 2px solid var(--border);
-  padding: 0.15rem 0 0.15rem 0.85rem;
-  margin-bottom: 0.9rem;
+  background: var(--surface);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-sm), inset 3px 0 0 var(--accent);
+  padding: 0.95rem 1.3rem 1.1rem;
 }
 
-.note-meta {
-  font-size: 0.76rem;
+.note-mine { box-shadow: var(--shadow-sm), inset 3px 0 0 var(--border); }
+
+.note-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.65rem;
+  margin-bottom: 0.5rem;
+}
+
+.note-author {
+  font-size: 0.74rem;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.note-mine .note-author { color: var(--muted); }
+.note-when { font-size: 0.8rem; color: var(--muted); }
+
+/* Hidden until the card is hovered, the same as the retire control on a fact. */
+.note-delete {
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.note:hover .note-delete,
+.note-delete:focus { opacity: 1; }
+
+.note-body {
+  white-space: pre-wrap;
+  font-size: 0.94rem;
+  line-height: 1.65;
+}
+
+.note-more summary {
+  cursor: pointer;
+  list-style: none;
+  padding-top: 0.55rem;
+  font-size: 0.82rem;
   color: var(--muted);
-  display: flex;
-  gap: 0.6rem;
-  align-items: center;
-  margin-bottom: 0.15rem;
 }
 
-.note-body { white-space: pre-wrap; font-size: 0.92rem; }
+.note-more summary::-webkit-details-marker { display: none; }
+.note-more summary::after { content: "Read the rest \2193"; }
+.note-more[open] summary::after { content: "Collapse \2191"; }
+.note-more summary:hover { color: var(--accent); }
+.note-more .note-body { margin-top: 0.65rem; }
 
-.author-claude { color: var(--accent); }
-
-.version-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.65rem 0;
-  border-bottom: 1px solid var(--border);
-}
-
-.version-row:last-child { border-bottom: none; }
-.version-actions { display: flex; gap: 0.4rem; align-items: center; }
+.note-composer { margin-bottom: 1.5rem; max-width: 78ch; }
+.note-composer textarea { min-height: 5rem; }
+.note-composer .actions { justify-content: space-between; margin-top: 0.6rem; }
+.note-hint { font-size: 0.8rem; color: var(--muted); }
 
 /* --------------------------------------------------------------- questions */
 
@@ -309,8 +491,8 @@ details.add-manual > *:not(summary) { margin-top: 0.6rem; }
 
 .answer {
   background: var(--accent-soft);
-  border-radius: 6px;
-  padding: 0.6rem 0.8rem;
+  border-radius: var(--radius-sm);
+  padding: 0.7rem 0.9rem;
   font-size: 0.9rem;
   white-space: pre-wrap;
 }
@@ -337,9 +519,14 @@ details.add-manual > *:not(summary) { margin-top: 0.6rem; }
   align-items: baseline;
   gap: 1rem;
   border-bottom: 1px solid var(--border);
-  padding-bottom: 0.3rem;
-  margin-bottom: 0.5rem;
+  padding-bottom: 0.35rem;
+  margin-bottom: 0.6rem;
 }
+
+/* The profile card's heading, and the meta and retire row opposite a role or
+   project heading. */
+.card-title { font-weight: 600; font-size: 1rem; }
+.fact-actions { display: flex; gap: 0.5rem; align-items: center; }
 
 .fact-list { list-style: none; margin: 0; padding: 0; }
 
@@ -377,10 +564,9 @@ details.add-manual > *:not(summary) { margin-top: 0.6rem; }
 .id {
   font: 0.72rem ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--muted);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 0 4px;
+  background: var(--accent-soft);
+  border-radius: 6px;
+  padding: 0 5px;
   flex-shrink: 0;
   min-width: 2.2rem;
   text-align: center;
@@ -389,9 +575,9 @@ details.add-manual > *:not(summary) { margin-top: 0.6rem; }
 .tag {
   font-size: 0.72rem;
   color: var(--muted);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 0 5px;
+  background: var(--accent-soft);
+  border-radius: 6px;
+  padding: 0 6px;
 }
 
 /* ------------------------------------------------------- resume reading view */
@@ -412,9 +598,9 @@ details.add-manual > *:not(summary) { margin-top: 0.6rem; }
 
 .btn {
   display: inline-block;
-  padding: 0.35rem 0.8rem;
+  padding: 0.35rem 0.85rem;
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: 999px;
   background: var(--surface);
   color: var(--text);
   font: inherit;
@@ -424,8 +610,8 @@ details.add-manual > *:not(summary) { margin-top: 0.6rem; }
   line-height: 1.4;
 }
 .btn:hover { border-color: var(--accent); color: var(--accent); }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-.btn.primary:hover { filter: brightness(1.08); color: #fff; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-contrast); }
+.btn.primary:hover { filter: brightness(1.08); color: var(--accent-contrast); }
 
 .doc-meta { color: var(--muted); font-size: 0.82rem; margin: 0 0 0.75rem; }
 .doc-meta summary { cursor: pointer; }
@@ -434,8 +620,8 @@ details.add-manual > *:not(summary) { margin-top: 0.6rem; }
 .doc-meta code {
   background: var(--accent-soft);
   color: var(--text);
-  padding: 0.05rem 0.3rem;
-  border-radius: 4px;
+  padding: 0.05rem 0.35rem;
+  border-radius: 6px;
   font-size: 0.95em;
 }
 
@@ -443,8 +629,8 @@ details.add-manual > *:not(summary) { margin-top: 0.6rem; }
    window width — the PDF's real constraint is a page, and this is the analogue. */
 .doc {
   background: var(--surface);
-  border: 1px solid var(--border);
   border-radius: var(--radius);
+  box-shadow: var(--shadow);
   padding: 2.5rem 3rem;
   max-width: 86ch;
   margin: 0 auto 1.5rem;
@@ -498,10 +684,10 @@ details.add-manual > *:not(summary) { margin-top: 0.6rem; }
 .rationale {
   max-width: 86ch;
   margin: 0 auto 2rem;
-  border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--surface);
-  padding: 0.75rem 1rem;
+  box-shadow: var(--shadow-sm);
+  padding: 0.85rem 1.1rem;
 }
 .rationale summary { cursor: pointer; font-size: 0.9rem; color: var(--muted); }
 .rationale summary:hover { color: var(--text); }
@@ -565,3 +751,263 @@ details.add-manual > *:not(summary) { margin-top: 0.6rem; }
 .letter-links div { margin-bottom: 0.2rem; }
 .letter-links a { color: var(--muted); text-decoration: none; }
 .letter-links a:hover { color: var(--accent); text-decoration: underline; }
+
+
+/* ========================================================== the workspace */
+
+/* The jobs screen is a pair of panes that scroll independently, so the list
+   keeps its place while you read a resume and the resume keeps its place while
+   you search the list. That needs the page itself never to scroll. */
+main.full {
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  height: calc(100vh - 52px);
+  overflow: hidden;
+}
+
+.workspace {
+  display: flex;
+  height: 100%;
+  align-items: stretch;
+}
+
+/* ----------------------------------------------------------- the sidebar */
+
+.sidebar {
+  flex: 0 0 20rem;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  box-shadow: var(--edge-right);
+  /* Above the pane, which otherwise paints over the shadow. */
+  position: relative;
+  z-index: 1;
+}
+
+.list-controls {
+  padding: 0.8rem 0.8rem 0.6rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  flex: 0 0 auto;
+}
+
+.list-controls input[type=search],
+.list-controls select {
+  font-size: 0.86rem;
+  padding: 0.42rem 0.65rem;
+  border-radius: 999px;
+}
+
+.list-controls .row > input,
+.list-controls .row > select { flex: 1; }
+
+.new-job {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 0.35rem 0.75rem;
+  font-size: 1rem;
+  line-height: 1.25;
+  color: var(--muted);
+}
+
+.job-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 0 0.5rem 2rem;
+}
+
+.list-count {
+  padding: 0.3rem 0.65rem 0.45rem;
+  font-size: 0.74rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.list-empty { padding: 0.5rem 0.65rem; }
+
+/* Sticky, because a long pipeline scrolls past several of these and the
+   heading is the only thing saying which group you are looking at. */
+.job-group {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.7rem 0.65rem 0.35rem;
+  background: var(--panel);
+}
+
+.job-group-n { font-size: 0.75rem; color: var(--muted); }
+
+.job-row {
+  display: flex;
+  gap: 0.55rem;
+  align-items: flex-start;
+  padding: 0.5rem 0.65rem;
+  margin-bottom: 1px;
+  border-radius: var(--radius-row);
+  text-decoration: none;
+  color: inherit;
+  transition: background 0.12s ease, box-shadow 0.12s ease;
+}
+
+.job-row:hover {
+  background: var(--hover);
+  box-shadow: inset 3px 0 0 var(--rule);
+}
+
+/* The open job shoals one band out of the ramp. */
+.job-row.selected,
+.job-row.selected:hover {
+  background: var(--select);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.job-row-text { min-width: 0; flex: 1; }
+
+/* Company, title and status stack in a fixed order so the eye can run down
+   one column of names. Titles clip rather than wrap, because two lines per row
+   halves how much of the list fits on screen. */
+.job-row-company,
+.job-row-title,
+.job-row-meta {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.job-row-company { font-weight: 600; font-size: 0.9rem; }
+.job-row-title { font-size: 0.85rem; color: var(--text); opacity: 0.85; }
+.job-row-meta { font-size: 0.76rem; color: var(--muted); margin-top: 0.1rem; }
+
+/* A status dot, so the list can be read by shape before it is read by word. */
+.pip {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+  opacity: 0.55;
+  margin-top: 0.45rem;
+}
+
+.pip-tailoring { background: var(--accent); opacity: 1; }
+.pip-applied, .pip-interviewing, .pip-offer { background: var(--ok); opacity: 1; }
+.pip-rejected, .pip-closed { background: var(--off); opacity: 0.5; }
+
+/* -------------------------------------------------------------- the pane */
+
+.pane {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.pane-head {
+  flex: 0 0 auto;
+  padding: 1.1rem 1.75rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.pane-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.pane-title h1 {
+  font-size: 1.25rem;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.pane-head .job-meta { margin: 0.6rem 0 0; }
+
+.tabs {
+  display: flex;
+  gap: 1.25rem;
+  margin-top: 0.9rem;
+}
+
+.tab {
+  display: inline-block;
+  padding: 0.4rem 0;
+  margin-bottom: -1px;
+  font-size: 0.9rem;
+  color: var(--muted);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+}
+
+.tab:hover { color: var(--text); }
+.tab.on { color: var(--text); border-bottom-color: var(--accent); font-weight: 550; }
+
+.tab-n {
+  font-size: 0.72rem;
+  color: var(--muted);
+  background: var(--accent-soft);
+  border-radius: 999px;
+  padding: 0 6px;
+}
+
+.pane-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 1.5rem 1.75rem 4rem;
+}
+
+/* Inside a pane the document already has its own scrolling column, so the
+   outer margin that centred it on a page is unused width. */
+.pane-body .doc { margin-bottom: 1rem; }
+
+/* The posting is the other document in the pane, so it is set like the resume
+   on the tab next to it, with the same paper, measure and lift. It drops its
+   own scrollbar and uses the pane's. */
+.pane-body .posting {
+  max-height: none;
+  max-width: 86ch;
+  margin: 0 auto 1rem;
+  padding: 2.5rem 3rem;
+  font-size: 0.93rem;
+  line-height: 1.7;
+  box-shadow: var(--shadow);
+}
+
+.pane-empty {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 3.5rem 1.75rem;
+  overflow-y: auto;
+}
+
+.pane-empty h1 { margin-bottom: 0.25rem; }
+
+/* ------------------------------------------------------------ narrow view */
+
+/* Below this width the two panes stack, with a short list above the job. */
+@media (max-width: 860px) {
+  main.full { height: auto; overflow: visible; }
+  .workspace { flex-direction: column; height: auto; }
+
+  .sidebar {
+    flex: 0 0 auto;
+    max-height: 45vh;
+    box-shadow: var(--edge-down);
+  }
+
+  .pane { overflow: visible; }
+  .pane-head { padding: 1rem 1.1rem 0; }
+  .pane-body { overflow: visible; padding: 1.25rem 1.1rem 3rem; }
+  .tabs { gap: 0.9rem; overflow-x: auto; }
+}

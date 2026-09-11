@@ -18,8 +18,10 @@ import (
 	"io/fs"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -68,24 +70,74 @@ var funcs = template.FuncMap{
 	// highlight applies the resume's emphasis terms, so the screen and the PDF
 	// agree about what is bold.
 	"highlight": render.HighlightHTML,
-	"truncate": func(n int, s string) string {
-		if len(s) <= n {
-			return s
-		}
-		return s[:n] + "…"
-	},
-	// shortDate turns "2026-07-31 14:02:11" into "2026-07-31".
-	"shortDate": func(s string) string {
-		if i := strings.IndexByte(s, ' '); i > 0 {
-			return s[:i]
-		}
+	"shortDate": shortDate,
+	"briefDate": briefDate,
+	"relTime":   relTime,
+	"fullTime":  fullTime,
+}
+
+// SQLite's datetime('now') writes UTC.
+const stampLayout = "2006-01-02 15:04:05"
+
+// relTime says how long ago something happened. A note log is read as a
+// sequence of events, and "3 days ago" places one faster than a date does.
+func relTime(s string) string {
+	t, err := time.ParseInLocation(stampLayout, s, time.UTC)
+	if err != nil {
+		// Show whatever was stored. shortDate cuts at the first space and
+		// turns an unparseable value into a shorter unparseable value.
 		return s
-	},
+	}
+	d := time.Since(t)
+	switch {
+	case d < 2*time.Minute:
+		// Also covers a clock that is slightly behind the database's.
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%d minutes ago", int(d.Minutes()))
+	case d < 2*time.Hour:
+		return "an hour ago"
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%d hours ago", int(d.Hours()))
+	case d < 48*time.Hour:
+		return "yesterday"
+	case d < 7*24*time.Hour:
+		return fmt.Sprintf("%d days ago", int(d.Hours()/24))
+	default:
+		return t.Local().Format("2 Jan 2006")
+	}
+}
+
+// fullTime is the exact local time, for the tooltip behind relTime.
+func fullTime(s string) string {
+	t, err := time.ParseInLocation(stampLayout, s, time.UTC)
+	if err != nil {
+		return s
+	}
+	return t.Local().Format("Mon 2 Jan 2006, 15:04")
+}
+
+// shortDate turns "2026-07-31 14:02:11" into "2026-07-31".
+func shortDate(s string) string {
+	if i := strings.IndexByte(s, ' '); i > 0 {
+		return s[:i]
+	}
+	return s
+}
+
+// briefDate turns the same stamp into "Jul 31". Every sidebar row repeats the
+// same year, so the year is dropped.
+func briefDate(s string) string {
+	t, err := time.Parse("2006-01-02 15:04:05", s)
+	if err != nil {
+		return shortDate(s)
+	}
+	return t.Format("Jan 2")
 }
 
 // pageFiles lists each full page; every one is parsed with the layout and the
 // partials so it can render fragments inline on a cold load.
-var pageFiles = []string{"jobs.html", "job.html", "resume.html", "cover.html", "questions.html", "facts.html"}
+var pageFiles = []string{"workspace.html", "resume.html", "cover.html", "questions.html", "facts.html"}
 
 func newServer(reopen func() (*store.Store, error), outRoot string) (*server, error) {
 	s := &server{reopen: reopen, outRoot: outRoot, pages: map[string]*template.Template{}}
@@ -189,6 +241,8 @@ func Serve(reopen func() (*store.Store, error), outRoot, addr string) error {
 
 	mux.HandleFunc("GET /{$}", s.listJobs)
 	mux.HandleFunc("POST /jobs", s.addJob)
+	// A literal segment beats the wildcard below it, so this never shadows a job.
+	mux.HandleFunc("GET /jobs/list", s.jobList)
 	mux.HandleFunc("GET /jobs/{id}", s.showJob)
 	mux.HandleFunc("POST /jobs/{id}/notes", s.addNote)
 	mux.HandleFunc("POST /jobs/{id}/status", s.updateStatus)
@@ -227,14 +281,275 @@ func Serve(reopen func() (*store.Store, error), outRoot, addr string) error {
 
 // ------------------------------------------------------------- view models
 
+// The workspace is the jobs screen: a filtered list on the left, one job on
+// the right. Both halves are addressable, so the browser's URL always says
+// which job is open and under which filter.
+
+const (
+	sortRecent  = "recent"
+	sortCompany = "company"
+	sortStatus  = "status"
+)
+
+const (
+	tabResume    = "resume"
+	tabCover     = "cover"
+	tabPosting   = "posting"
+	tabNotes     = "notes"
+	tabQuestions = "questions"
+)
+
+// listQuery is the state of the sidebar's three controls. Every link the
+// workspace draws includes it, so opening a job or switching a tab keeps the
+// current filter.
+type listQuery struct {
+	Q      string
+	Status string
+	Sort   string
+}
+
+func parseListQuery(v url.Values) listQuery {
+	lq := listQuery{
+		Q:      strings.TrimSpace(v.Get("q")),
+		Status: v.Get("status"),
+		Sort:   v.Get("sort"),
+	}
+	if !validStatus(lq.Status) {
+		lq.Status = ""
+	}
+	switch lq.Sort {
+	case sortCompany, sortStatus:
+	default:
+		lq.Sort = sortRecent
+	}
+	return lq
+}
+
+// href builds a workspace address from a path, the tab to open, and the list
+// state to keep. Defaults are omitted, so an untouched workspace has the bare
+// "/jobs/12" address.
+func (lq listQuery) href(path, tab string) string {
+	v := url.Values{}
+	if tab != "" && tab != tabResume {
+		v.Set("tab", tab)
+	}
+	if lq.Q != "" {
+		v.Set("q", lq.Q)
+	}
+	if lq.Status != "" {
+		v.Set("status", lq.Status)
+	}
+	if lq.Sort != sortRecent {
+		v.Set("sort", lq.Sort)
+	}
+	if len(v) == 0 {
+		return path
+	}
+	return path + "?" + v.Encode()
+}
+
+func validTab(t string) string {
+	switch t {
+	case tabCover, tabPosting, tabNotes, tabQuestions:
+		return t
+	}
+	return tabResume
+}
+
+type jobRow struct {
+	Job      store.Job
+	Href     string
+	Selected bool
+}
+
+// jobGroup holds the rows for one status, used only when sorting by status.
+type jobGroup struct {
+	Name string
+	Rows []jobRow
+}
+
 type jobListView struct {
-	Jobs   []store.Job
-	Filter string
+	Rows   []jobRow
+	Groups []jobGroup
+	Query  listQuery
+	Count  string
+	// OOB marks the list as an out-of-band swap, so a response whose real
+	// subject is the right pane can still correct the sidebar underneath it.
+	OOB bool
+}
+
+// buildJobList applies the sidebar's controls. Filtering and ordering happen
+// here rather than in SQL because the list is small, and because the count
+// line needs to know how many jobs exist as well as how many matched.
+func buildJobList(jobs []store.Job, lq listQuery, selected int64) jobListView {
+	v := jobListView{Query: lq}
+	needle := strings.ToLower(lq.Q)
+	var matched []store.Job
+	for _, j := range jobs {
+		if lq.Status != "" && j.Status != lq.Status {
+			continue
+		}
+		if needle != "" && !jobMatches(j, needle) {
+			continue
+		}
+		matched = append(matched, j)
+	}
+
+	row := func(j store.Job) jobRow {
+		path := fmt.Sprintf("/jobs/%d", j.ID)
+		return jobRow{Job: j, Href: lq.href(path, ""), Selected: j.ID == selected}
+	}
+
+	switch lq.Sort {
+	case sortCompany:
+		sort.SliceStable(matched, func(a, b int) bool {
+			ca, cb := strings.ToLower(matched[a].Company), strings.ToLower(matched[b].Company)
+			if ca != cb {
+				return ca < cb
+			}
+			return strings.ToLower(matched[a].Title) < strings.ToLower(matched[b].Title)
+		})
+	case sortStatus:
+		// Pipeline order rather than alphabetical: the reason to group by
+		// status is to see where the applications are piling up.
+		byStatus := map[string][]store.Job{}
+		for _, j := range matched {
+			byStatus[j.Status] = append(byStatus[j.Status], j)
+		}
+		for _, st := range store.JobStatuses {
+			g := jobGroup{Name: st}
+			for _, j := range byStatus[st] {
+				g.Rows = append(g.Rows, row(j))
+			}
+			if len(g.Rows) > 0 {
+				v.Groups = append(v.Groups, g)
+			}
+		}
+	}
+	if lq.Sort != sortStatus {
+		for _, j := range matched {
+			v.Rows = append(v.Rows, row(j))
+		}
+	}
+
+	v.Count = countLine(len(matched), len(jobs))
+	return v
+}
+
+// jobMatches searches the fields a person remembers a job by. The description
+// is excluded because it matches almost every query.
+func jobMatches(j store.Job, needle string) bool {
+	for _, f := range []string{j.Company, j.Title, j.Location, j.Status} {
+		if strings.Contains(strings.ToLower(f), needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func countLine(shown, total int) string {
+	switch {
+	case shown != total:
+		return fmt.Sprintf("%d of %d jobs", shown, total)
+	case total == 1:
+		return "1 job"
+	default:
+		return fmt.Sprintf("%d jobs", total)
+	}
+}
+
+// tabLink is one entry on the strip above the pane body.
+type tabLink struct {
+	Key   string
+	Label string
+	Count int
+	Href  string
+	On    bool
+}
+
+// tabsView is the strip on its own. Counts on it change from inside the pane,
+// when a note is added or a question answered, so a response that redraws one
+// card redraws the strip as well.
+type tabsView struct {
+	Tabs []tabLink
+	OOB  bool
+}
+
+func buildTabs(jobID int64, lq listQuery, tab string, notes, questions, open int) tabsView {
+	v := tabsView{Tabs: []tabLink{
+		{Key: tabResume, Label: "Resume"},
+		{Key: tabCover, Label: "Cover"},
+		{Key: tabPosting, Label: "Posting"},
+		{Key: tabNotes, Label: "Notes", Count: notes},
+	}}
+	// The questions tab appears only once there is something to read there.
+	if questions > 0 {
+		v.Tabs = append(v.Tabs, tabLink{Key: tabQuestions, Label: "Questions", Count: open})
+	}
+	path := fmt.Sprintf("/jobs/%d", jobID)
+	for i := range v.Tabs {
+		v.Tabs[i].On = v.Tabs[i].Key == tab
+		v.Tabs[i].Href = lq.href(path, v.Tabs[i].Key)
+	}
+	return v
+}
+
+// jobPaneView is the right-hand pane: one job, one tab at a time. A zero value
+// is the no-job-selected state, which renders the add-a-job form instead.
+type jobPaneView struct {
+	Job       *store.Job
+	Status    statusView
+	Tab       string
+	Tabs      tabsView
+	Notes     notesView
+	Questions []questionView
+	Versions  versionsView
+	Cover     coverView
 }
 
 type notesView struct {
 	JobID int64
-	Notes []store.JobNote
+	Notes []noteView
+}
+
+// noteView is one note prepared for reading. Claude's notes are reasoning
+// records that run to several paragraphs. Three of them at full length fill
+// the tab, so a long note shows its opening paragraph and expands on request.
+type noteView struct {
+	Note store.JobNote
+	Lead string
+	Rest string
+	// Mine marks a note the user wrote, as opposed to one Claude left behind.
+	Mine bool
+}
+
+// noteFold is the length past which a note folds. Below it the control costs
+// more attention than the text it hides.
+const noteFold = 400
+
+// splitNote separates the opening paragraph from the rest. The split uses the
+// author's blank line rather than a guessed sentence boundary.
+func splitNote(body string) (lead, rest string) {
+	body = strings.TrimSpace(body)
+	if len(body) <= noteFold {
+		return body, ""
+	}
+	for _, sep := range []string{"\r\n\r\n", "\n\n"} {
+		if i := strings.Index(body, sep); i > 0 {
+			return strings.TrimSpace(body[:i]), strings.TrimSpace(body[i+len(sep):])
+		}
+	}
+	// One long paragraph has no break to fold on, so let it run.
+	return body, ""
+}
+
+func buildNotes(notes []store.JobNote) []noteView {
+	out := make([]noteView, 0, len(notes))
+	for _, n := range notes {
+		lead, rest := splitNote(n.Body)
+		out = append(out, noteView{Note: n, Lead: lead, Rest: rest, Mine: n.Author != "claude"})
+	}
+	return out
 }
 
 type statusView struct {
@@ -276,11 +591,8 @@ func (s *server) coverViewFor(r *http.Request, letter *store.CoverLetter, job *s
 // coverPage renders a cover letter on its own, away from the job's other
 // material.
 type coverPage struct {
-	Title     string
-	Nav       string
-	Cover     coverView
-	OpenCount int
-	Flash     string
+	chrome
+	Cover coverView
 }
 
 func (s *server) showCover(w http.ResponseWriter, r *http.Request) {
@@ -299,8 +611,8 @@ func (s *server) showCover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.render(w, "cover.html", coverPage{
-		Title: job.Label(), Nav: "jobs",
-		Cover: s.coverViewFor(r, letter, job), OpenCount: s.openCount(r),
+		chrome: chrome{Title: job.Label(), Nav: "jobs", OpenCount: s.openCount(r)},
+		Cover:  s.coverViewFor(r, letter, job),
 	})
 }
 
@@ -362,29 +674,77 @@ func (s *server) openCount(r *http.Request) int {
 
 // ------------------------------------------------------------------- pages
 
-type jobsPage struct {
+// chrome is what layout.html needs from every page, embedded rather than
+// repeated so the layout can grow a field without six structs following it.
+type chrome struct {
 	Title     string
 	Nav       string
-	List      jobListView
 	OpenCount int
 	Flash     string
+	// Wide drops the centred column. The workspace fills the window and
+	// scrolls its two panes separately.
+	Wide bool
+}
+
+type workspacePage struct {
+	chrome
+	List jobListView
+	Pane jobPaneView
 }
 
 func (s *server) listJobs(w http.ResponseWriter, r *http.Request) {
-	filter := r.URL.Query().Get("status")
-	jobs, err := appOf(r).Store.ListJobs(filter)
-	if fail(w, err) {
+	lq := parseListQuery(r.URL.Query())
+	s.render(w, "workspace.html", s.workspacePage(r, lq, 0, jobPaneView{}))
+}
+
+// workspacePage assembles both panes for a cold load.
+func (s *server) workspacePage(r *http.Request, lq listQuery, selected int64, pane jobPaneView) workspacePage {
+	title := "Jobs"
+	if pane.Job != nil {
+		title = pane.Job.Label()
+	}
+	return workspacePage{
+		chrome: chrome{Title: title, Nav: "jobs", OpenCount: s.openCount(r),
+			Flash: r.URL.Query().Get("flash"), Wide: true},
+		List: s.listView(r, lq, selected),
+		Pane: pane,
+	}
+}
+
+func (s *server) listView(r *http.Request, lq listQuery, selected int64) jobListView {
+	jobs, err := appOf(r).Store.ListJobs("")
+	if err != nil {
+		return jobListView{Query: lq}
+	}
+	return buildJobList(jobs, lq, selected)
+}
+
+// jobList serves the sidebar alone, for the search box and the two selects.
+// Which job is open is read back from the address bar rather than carried in a
+// hidden field, so the controls never have to know about the pane beside them.
+func (s *server) jobList(w http.ResponseWriter, r *http.Request) {
+	lq := parseListQuery(r.URL.Query())
+	selected := currentJobID(r)
+	if !isHTMX(r) {
+		redirect(w, r, lq.href("/", ""))
 		return
 	}
-	list := jobListView{Jobs: jobs, Filter: filter}
-	if isHTMX(r) {
-		s.partial(w, "job-list", list)
-		return
+	dest := "/"
+	if selected > 0 {
+		dest = fmt.Sprintf("/jobs/%d", selected)
 	}
-	s.render(w, "jobs.html", jobsPage{
-		Title: "Jobs", Nav: "jobs", List: list,
-		OpenCount: s.openCount(r), Flash: r.URL.Query().Get("flash"),
-	})
+	// Keep the address bar in step: a reload comes back to the same filtered
+	// list with the same job and tab open.
+	w.Header().Set("HX-Push-Url", lq.href(dest, currentTab(r)))
+	s.partial(w, "job-list", s.listView(r, lq, selected))
+}
+
+// oobList redraws the sidebar out of band. Used by handlers whose response is
+// really about the right pane but whose change shows on the left as well.
+func (s *server) oobList(w http.ResponseWriter, r *http.Request, lq listQuery, selected int64) {
+	view := s.listView(r, lq, selected)
+	view.OOB = true
+	s.partial(w, "job-list", view)
 }
 
 func (s *server) addJob(w http.ResponseWriter, r *http.Request) {
@@ -405,19 +765,6 @@ func (s *server) addJob(w http.ResponseWriter, r *http.Request) {
 	redirect(w, r, dest)
 }
 
-type jobPage struct {
-	Title     string
-	Nav       string
-	Job       *store.Job
-	Status    statusView
-	Notes     notesView
-	Questions []questionView
-	Versions  versionsView
-	Cover     coverView
-	OpenCount int
-	Flash     string
-}
-
 func (s *server) showJob(w http.ResponseWriter, r *http.Request) {
 	id, err := pathID(r, "id")
 	if fail(w, err) {
@@ -428,47 +775,111 @@ func (s *server) showJob(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	notes, err := appOf(r).Store.ListJobNotes(id)
+	lq := parseListQuery(r.URL.Query())
+	pane, err := s.paneFor(r, job, lq, validTab(r.URL.Query().Get("tab")))
 	if fail(w, err) {
 		return
 	}
-	questions, err := appOf(r).Store.ListQuestions("", &id)
-	if fail(w, err) {
+	if isHTMX(r) {
+		s.partial(w, "job-pane", pane)
+		// Switching tabs within the job already open leaves the sidebar
+		// correct, and skips redrawing it.
+		if currentJobID(r) != id {
+			s.oobList(w, r, lq, id)
+		}
 		return
 	}
-	resumes, err := appOf(r).Store.ListResumes(id)
-	if fail(w, err) {
-		return
+	s.render(w, "workspace.html", s.workspacePage(r, lq, id, pane))
+}
+
+// paneFor gathers what one tab needs. The counts on the tab strip are cheap,
+// but assembling a resume or a letter is not, so each is read only for its own
+// tab.
+func (s *server) paneFor(r *http.Request, job *store.Job, lq listQuery, tab string) (jobPaneView, error) {
+	st := appOf(r).Store
+	notes, err := st.ListJobNotes(job.ID)
+	if err != nil {
+		return jobPaneView{}, err
 	}
-	letter, err := appOf(r).Store.CoverLetterByJob(id)
-	if fail(w, err) {
-		return
+	questions, err := st.ListQuestions("", &job.ID)
+	if err != nil {
+		return jobPaneView{}, err
 	}
 
-	jobDoc, jobTerms := s.latestDoc(r, resumes)
-	jobFrozen, jobStatus := s.frozen(r, id)
-
-	returnTo := fmt.Sprintf("/jobs/%d", id)
+	back := lq.href(fmt.Sprintf("/jobs/%d", job.ID), tabQuestions)
 	var qviews []questionView
+	open := 0
 	for _, q := range questions {
 		if q.Status == "dismissed" {
 			continue
 		}
-		qviews = append(qviews, questionView{Q: q, ReturnTo: returnTo})
+		if q.Status == "open" {
+			open++
+		}
+		qviews = append(qviews, questionView{Q: q, ReturnTo: back})
 	}
 
-	s.render(w, "job.html", jobPage{
-		Title:     job.Label(),
-		Nav:       "jobs",
+	v := jobPaneView{
 		Job:       job,
 		Status:    statusView{Job: job},
-		Notes:     notesView{JobID: id, Notes: notes},
+		Tab:       tab,
+		Notes:     notesView{JobID: job.ID, Notes: buildNotes(notes)},
 		Questions: qviews,
-		Versions:  versionsView{Resumes: resumes, Doc: jobDoc, Highlight: jobTerms, Frozen: jobFrozen, Status: jobStatus},
-		Cover:     s.coverViewFor(r, letter, job),
-		OpenCount: s.openCount(r),
-		Flash:     r.URL.Query().Get("flash"),
-	})
+	}
+
+	switch tab {
+	case tabResume:
+		resumes, err := st.ListResumes(job.ID)
+		if err != nil {
+			return jobPaneView{}, err
+		}
+		doc, terms := s.latestDoc(r, resumes)
+		frozen, status := s.frozen(r, job.ID)
+		v.Versions = versionsView{Resumes: resumes, Doc: doc, Highlight: terms, Frozen: frozen, Status: status}
+	case tabCover:
+		letter, err := st.CoverLetterByJob(job.ID)
+		if err != nil {
+			return jobPaneView{}, err
+		}
+		v.Cover = s.coverViewFor(r, letter, job)
+	}
+
+	v.Tabs = buildTabs(job.ID, lq, tab, len(notes), len(qviews), open)
+	return v, nil
+}
+
+// oobTabs redraws the tab strip out of band, for mutations whose response is
+// one card rather than the whole pane. It stays quiet when the browser is not
+// on a job page, because then there is no strip on screen to correct.
+func (s *server) oobTabs(w http.ResponseWriter, r *http.Request) {
+	jobID := currentJobID(r)
+	if jobID == 0 {
+		return
+	}
+	st := appOf(r).Store
+	notes, err := st.ListJobNotes(jobID)
+	if err != nil {
+		return
+	}
+	questions, err := st.ListQuestions("", &jobID)
+	if err != nil {
+		return
+	}
+	shown, open := 0, 0
+	for _, q := range questions {
+		if q.Status == "dismissed" {
+			continue
+		}
+		shown++
+		if q.Status == "open" {
+			open++
+		}
+	}
+	u := currentURL(r)
+	view := buildTabs(jobID, parseListQuery(u.Query()), validTab(u.Query().Get("tab")),
+		len(notes), shown, open)
+	view.OOB = true
+	s.partial(w, "job-tabs", view)
 }
 
 func (s *server) addNote(w http.ResponseWriter, r *http.Request) {
@@ -488,9 +899,10 @@ func (s *server) addNote(w http.ResponseWriter, r *http.Request) {
 	if fail(w, err) {
 		return
 	}
-	view := notesView{JobID: id, Notes: notes}
+	view := notesView{JobID: id, Notes: buildNotes(notes)}
 	if isHTMX(r) {
 		s.partial(w, "notes", view)
+		s.oobTabs(w, r)
 		return
 	}
 	http.Redirect(w, r, fmt.Sprintf("/jobs/%d#notes", id), http.StatusSeeOther)
@@ -504,15 +916,26 @@ func (s *server) deleteNote(w http.ResponseWriter, r *http.Request) {
 	if fail(w, err) {
 		return
 	}
+	// Read the note's job before the row is gone.
+	jobID, err := appOf(r).Store.JobNoteOwner(id)
+	if fail(w, err) {
+		return
+	}
 	if err := appOf(r).Store.DeleteJobNote(id); fail(w, err) {
 		return
 	}
 	if isHTMX(r) {
-		// Swapping in nothing removes the note from the list.
-		w.WriteHeader(http.StatusOK)
+		// The whole list comes back rather than just the removed card, so
+		// the empty state appears after the last note is deleted.
+		notes, err := appOf(r).Store.ListJobNotes(jobID)
+		if fail(w, err) {
+			return
+		}
+		s.partial(w, "notes", notesView{JobID: jobID, Notes: buildNotes(notes)})
+		s.oobTabs(w, r)
 		return
 	}
-	http.Redirect(w, r, returnTo(r, "/"), http.StatusSeeOther)
+	http.Redirect(w, r, returnTo(r, fmt.Sprintf("/jobs/%d?tab=notes", jobID)), http.StatusSeeOther)
 }
 
 func (s *server) updateStatus(w http.ResponseWriter, r *http.Request) {
@@ -539,6 +962,9 @@ func (s *server) updateStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	if isHTMX(r) {
 		s.partial(w, "status-control", statusView{Job: job})
+		// The sidebar prints the status too, and groups by it when sorted
+		// that way, so it has to be redrawn alongside the control.
+		s.oobList(w, r, parseListQuery(currentURL(r).Query()), id)
 		return
 	}
 	http.Redirect(w, r, fmt.Sprintf("/jobs/%d", id), http.StatusSeeOther)
@@ -570,7 +996,7 @@ func (s *server) updateDescription(w http.ResponseWriter, r *http.Request) {
 	if err := appOf(r).Store.UpdateJobFields(id, fields); fail(w, err) {
 		return
 	}
-	redirect(w, r, fmt.Sprintf("/jobs/%d?flash=%s", id, urlEscape("posting updated")))
+	redirect(w, r, fmt.Sprintf("/jobs/%d?tab=posting&flash=%s", id, urlEscape("posting updated")))
 }
 
 func (s *server) deleteJob(w http.ResponseWriter, r *http.Request) {
@@ -585,12 +1011,9 @@ func (s *server) deleteJob(w http.ResponseWriter, r *http.Request) {
 }
 
 type questionsPage struct {
-	Title     string
-	Nav       string
-	Open      []questionView
-	Answered  []questionView
-	OpenCount int
-	Flash     string
+	chrome
+	Open     []questionView
+	Answered []questionView
 }
 
 func (s *server) listQuestions(w http.ResponseWriter, r *http.Request) {
@@ -621,8 +1044,8 @@ func (s *server) listQuestions(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.render(w, "questions.html", questionsPage{
-		Title: "Questions", Nav: "questions",
-		Open: open, Answered: answered, OpenCount: len(open),
+		chrome: chrome{Title: "Questions", Nav: "questions", OpenCount: len(open)},
+		Open:   open, Answered: answered,
 	})
 }
 
@@ -683,6 +1106,7 @@ func (s *server) answerQuestion(w http.ResponseWriter, r *http.Request) {
 	}
 	if isHTMX(r) {
 		s.questionFragment(w, r, id, false)
+		s.oobTabs(w, r)
 		return
 	}
 	http.Redirect(w, r, returnTo(r, "/questions"), http.StatusSeeOther)
@@ -700,8 +1124,8 @@ func (s *server) dismissQuestion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if isHTMX(r) {
-		// Nothing swapped back: the card disappears.
-		w.WriteHeader(http.StatusOK)
+		// Nothing swapped back but the strip: the card disappears.
+		s.oobTabs(w, r)
 		return
 	}
 	http.Redirect(w, r, returnTo(r, "/questions"), http.StatusSeeOther)
@@ -731,16 +1155,13 @@ type skillGroup struct {
 }
 
 type factsPage struct {
-	Title        string
-	Nav          string
+	chrome
 	Profile      store.Profile
 	Contacts     []store.Contact
 	Experience   []factGroup
 	Projects     []factGroup
 	Skills       []skillGroup
 	Patents      []factRow
-	OpenCount    int
-	Flash        string
 	RetiredCount int
 }
 
@@ -752,9 +1173,9 @@ func (s *server) showFacts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	page := factsPage{
-		Title: "Facts", Nav: "facts", OpenCount: s.openCount(r),
+		chrome: chrome{Title: "Facts", Nav: "facts", OpenCount: s.openCount(r),
+			Flash: r.URL.Query().Get("flash")},
 		Profile: fb.Profile, Contacts: fb.Contacts,
-		Flash: r.URL.Query().Get("flash"),
 	}
 
 	count := func(retired bool) {
@@ -905,14 +1326,11 @@ func (s *server) factRowByID(r *http.Request, kind string, id int64) (factRow, e
 // same selection the PDF is built from, laid out for a screen, so a resume can
 // be reviewed without opening a file.
 type resumePage struct {
-	Title     string
-	Nav       string
+	chrome
 	Doc       *store.Document
 	Highlight []string
 	Frozen    bool
 	Status    string
-	OpenCount int
-	Flash     string
 }
 
 func (s *server) showResume(w http.ResponseWriter, r *http.Request) {
@@ -939,8 +1357,8 @@ func (s *server) showResume(w http.ResponseWriter, r *http.Request) {
 		frozen, status = s.frozen(r, doc.Job.ID)
 	}
 	s.render(w, "resume.html", resumePage{
-		Title: title, Nav: "jobs", Doc: doc, Highlight: terms,
-		Frozen: frozen, Status: status, OpenCount: s.openCount(r),
+		chrome: chrome{Title: title, Nav: "jobs", OpenCount: s.openCount(r)},
+		Doc:    doc, Highlight: terms, Frozen: frozen, Status: status,
 	})
 }
 
@@ -1062,7 +1480,7 @@ func (s *server) renderCover(w http.ResponseWriter, r *http.Request) {
 		s.partial(w, "cover", view)
 		return
 	}
-	redirect(w, r, fmt.Sprintf("/jobs/%d", c.JobID))
+	redirect(w, r, fmt.Sprintf("/jobs/%d?tab=cover", c.JobID))
 }
 
 // resumeSentPDF serves the frozen copy: the document as it went out, not as it
@@ -1150,6 +1568,33 @@ func (s *server) renderResume(w http.ResponseWriter, r *http.Request) {
 func trigger(msg string) string {
 	msg = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", " ", "\r", "").Replace(msg)
 	return `{"flash":"` + msg + `"}`
+}
+
+// currentURL is the page the browser is showing, as htmx reports it. A
+// fragment response has no other source for the context it is swapped into.
+func currentURL(r *http.Request) *url.URL {
+	u, err := url.Parse(r.Header.Get("HX-Current-URL"))
+	if err != nil {
+		return &url.URL{}
+	}
+	return u
+}
+
+// currentJobID is the job open in the right pane, or 0 for none.
+func currentJobID(r *http.Request) int64 {
+	p := currentURL(r).Path
+	if !strings.HasPrefix(p, "/jobs/") {
+		return 0
+	}
+	id, err := strconv.ParseInt(strings.TrimPrefix(p, "/jobs/"), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return id
+}
+
+func currentTab(r *http.Request) string {
+	return validTab(currentURL(r).Query().Get("tab"))
 }
 
 func urlEscape(s string) string {
