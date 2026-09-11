@@ -1,0 +1,50 @@
+version: 2
+
+project_name: resumed
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - main: ./cmd/resumed
+    binary: resumed
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+
+archives:
+  - formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+
+brews:
+  - name: resumed
+    repository:
+      owner: beetlebugorg
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: https://github.com/beetlebugorg/resumed
+    description: Tailored resumes and cover letters built from a fact base
+    license: MIT
+    # typst turns the generated source into a PDF. resumed writes the .typ
+    # file without it.
+    dependencies:
+      - name: typst
+        type: optional
+    test: |
+      system "#{bin}/resumed", "help"
