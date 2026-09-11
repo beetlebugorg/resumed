@@ -183,18 +183,10 @@ type CoverLetter struct {
 	Body      string `json:"body"`
 	Closing   string `json:"closing,omitempty"`
 	Rationale string `json:"rationale,omitempty"`
-	// Highlight lists terms the renderer bolds wherever they appear in the
-	// summary and bullet text. Stored newline-separated.
-	Highlight []string `json:"highlight,omitempty"`
-	Typst     string   `json:"-"`
-	// The frozen copy of what was sent. Empty until the job reaches a status
-	// that means an application is out in the world.
-	SentTypst   string `json:"-"`
-	SentPDFPath string `json:"sent_pdf_path,omitempty"`
-	SentAt      string `json:"sent_at,omitempty"`
-	PDFPath     string `json:"pdf_path,omitempty"`
-	CreatedAt   string `json:"created_at"`
-	UpdatedAt   string `json:"updated_at"`
+	Typst     string `json:"-"`
+	PDFPath   string `json:"pdf_path,omitempty"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
 }
 
 // Paragraphs splits the stored body on blank lines, which is how the letter is
