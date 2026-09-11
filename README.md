@@ -52,22 +52,33 @@ the argument later.
 
 ## Requirements
 
-- [Go](https://go.dev) 1.26 or newer, to build.
-- [Typst](https://typst.app), to turn the generated source into a PDF. Without
-  it resumed still writes the `.typ` file.
-- [Claude Code](https://claude.com/claude-code), or another MCP client, to do
-  the tailoring.
+- [Typst](https://typst.app) turns the generated source into a PDF. Homebrew
+  installs it alongside resumed. Without it resumed still writes the `.typ`
+  file.
+- [Claude Code](https://claude.com/claude-code), or another MCP client, does the
+  tailoring.
+- [Go](https://go.dev) 1.26 or newer, to build from source.
 
 ## Install
 
 ```sh
-brew install typst
-make build
-bin/resumed import seed/facts.json
+brew install beetlebugorg/tap/resumed
 ```
 
-`seed/facts.json` is example data for Pat Example of Springfield, IL. Replace it
-with your own.
+Or build it:
+
+```sh
+make build
+```
+
+Then load a fact base. `seed/facts.json` in this repository is example data for
+Pat Example of Springfield, IL:
+
+```sh
+resumed import seed/facts.json
+```
+
+Replace it with your own facts.
 
 ## Connect it to Claude Code
 

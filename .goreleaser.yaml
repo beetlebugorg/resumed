@@ -44,10 +44,10 @@ brews:
     homepage: https://github.com/beetlebugorg/resumed
     description: Tailored resumes and cover letters built from a fact base
     license: MIT
-    # typst turns the generated source into a PDF. resumed writes the .typ
-    # file without it.
+    # Homebrew removed optional dependencies, so this is a plain one. typst
+    # turns the generated source into a PDF, which is what most people
+    # installing this want.
     dependencies:
       - name: typst
-        type: optional
     test: |
       system "#{bin}/resumed", "help"
