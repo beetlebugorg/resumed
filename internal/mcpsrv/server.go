@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -49,7 +50,10 @@ or how to read a career move the bullets leave ambiguous. Do not restate the
 resume in paragraph form.`
 
 // New builds the MCP server with every tool registered.
-func New(a *app.App, version string) *mcp.Server {
+// New builds the MCP server. When reopen is non-nil the server holds no
+// database connection between calls: each request opens one, runs, and closes
+// it.
+func New(a *app.App, version string, reopen func() (*store.Store, error)) *mcp.Server {
 	s := mcp.NewServer(&mcp.Implementation{
 		Name:        "resumed",
 		Title:       "Resume Tailor",
@@ -57,12 +61,47 @@ func New(a *app.App, version string) *mcp.Server {
 		Version:     version,
 	}, &mcp.ServerOptions{Instructions: instructions})
 
+	if reopen != nil {
+		s.AddReceivingMiddleware(perCallStore(a, reopen))
+	}
+
 	registerFactTools(s, a)
 	registerJobTools(s, a)
 	registerQuestionTools(s, a)
 	registerResumeTools(s, a)
 	registerCoverLetterTools(s, a)
 	return s
+}
+
+// perCallStore opens the database for one request and closes it afterwards.
+//
+// A connection held for the life of the process keeps SQLite's write-ahead log
+// from being checkpointed back into the database file, so the file on disk
+// falls behind the data. Closing after each call also means a tool never reads
+// through a handle opened before someone edited the database by other means.
+//
+// The lock serializes requests. Stdio delivers them one at a time in practice,
+// and swapping a.Store needs the guarantee rather than the assumption.
+func perCallStore(a *app.App, reopen func() (*store.Store, error)) mcp.Middleware {
+	var mu sync.Mutex
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			mu.Lock()
+			defer mu.Unlock()
+
+			st, err := reopen()
+			if err != nil {
+				return nil, fmt.Errorf("open database: %w", err)
+			}
+			a.Store = st
+			defer func() {
+				st.Close()
+				a.Store = nil
+			}()
+
+			return next(ctx, method, req)
+		}
+	}
 }
 
 // ok wraps any value as a tool result. Structured JSON keeps the model from

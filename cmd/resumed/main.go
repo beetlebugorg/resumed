@@ -121,7 +121,10 @@ func run() error {
 
 	switch cmd {
 	case "mcp":
-		return runMCP(a)
+		// The database opened above is closed immediately. The MCP server
+		// opens its own for each call so it holds nothing between them.
+		st.Close()
+		return runMCP(a, func() (*store.Store, error) { return store.Open(*dbPath) })
 	case "serve":
 		return web.Serve(a, *addr)
 	case "import":
@@ -205,10 +208,10 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
-func runMCP(a *app.App) error {
+func runMCP(a *app.App, reopen func() (*store.Store, error)) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	srv := mcpsrv.New(a, version)
+	srv := mcpsrv.New(a, version, reopen)
 	// Anything written to stdout would corrupt the protocol stream, so status
 	// goes to stderr.
 	fmt.Fprintf(os.Stderr, "resumed mcp: db=%s out=%s\n", a.Store.Path, a.OutRoot)
