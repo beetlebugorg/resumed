@@ -26,7 +26,7 @@ func seed(t *testing.T, s *Store) (roleID, keepID, dropID int64) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	keepID, err = s.AddBullet(Bullet{RoleID: roleID, Text: "Built Ops Desk."})
+	keepID, err = s.AddBullet(Bullet{RoleID: roleID, Text: "Built the deploy console."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestRetiredFactStillRendersExistingResume(t *testing.T) {
 	s := testStore(t)
 	roleID, keepID, dropID := seed(t, s)
 
-	jobID, err := s.AddJob(Job{Company: "Docker", Title: "Staff Engineer"})
+	jobID, err := s.AddJob(Job{Company: "Northwind Systems", Title: "Staff Engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestRetiredFactRejectedByNewResume(t *testing.T) {
 	if err := s.SetFactRetired(KindBullet, dropID, true); err != nil {
 		t.Fatal(err)
 	}
-	jobID, err := s.AddJob(Job{Company: "Anthropic", Title: "Staff Engineer"})
+	jobID, err := s.AddJob(Job{Company: "Contoso", Title: "Staff Engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +156,7 @@ func TestRestoreBringsFactBack(t *testing.T) {
 func TestOneResumePerJob(t *testing.T) {
 	s := testStore(t)
 	roleID, keepID, _ := seed(t, s)
-	jobID, err := s.AddJob(Job{Company: "Docker", Title: "Staff Engineer"})
+	jobID, err := s.AddJob(Job{Company: "Northwind Systems", Title: "Staff Engineer"})
 	if err != nil {
 		t.Fatal(err)
 	}
