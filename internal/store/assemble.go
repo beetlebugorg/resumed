@@ -56,6 +56,10 @@ func (s *Store) Assemble(resumeID int64) (*Document, error) {
 	if err != nil {
 		return nil, err
 	}
+	bulletFact, err := s.factIDOf("bullets")
+	if err != nil {
+		return nil, err
+	}
 	items, err := s.ListResumeItems(resumeID)
 	if err != nil {
 		return nil, err
@@ -195,6 +199,8 @@ func (s *Store) Assemble(resumeID int64) (*Document, error) {
 		sort.SliceStable(doc.Roles[i].Bullets, func(a, b int) bool {
 			return doc.Roles[i].Bullets[a].Position < doc.Roles[i].Bullets[b].Position
 		})
+		// Nest after sorting, so children keep the order the resume gave them.
+		doc.Roles[i].Bullets = NestBullets(doc.Roles[i].Bullets, bulletFact)
 	}
 	for i := range doc.Projects {
 		sort.SliceStable(doc.Projects[i].Bullets, func(a, b int) bool {
@@ -225,6 +231,13 @@ func (s *Store) AssembleFull() (*Document, error) {
 	fb, err := s.FactBase()
 	if err != nil {
 		return nil, err
+	}
+	bulletFact, err := s.factIDOf("bullets")
+	if err != nil {
+		return nil, err
+	}
+	for i := range fb.Roles {
+		fb.Roles[i].Bullets = NestBullets(fb.Roles[i].Bullets, bulletFact)
 	}
 	doc := &Document{
 		Profile:  fb.Profile,

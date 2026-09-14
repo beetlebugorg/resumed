@@ -90,6 +90,21 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	// Bullet nesting. A bullet may name a parent bullet, which groups one
+	// engagement inside a role under a lead-in.
+	if has, err := hasColumn(db, "bullets", "parent_id"); err != nil {
+		return err
+	} else if !has {
+		if _, err := db.Exec(`ALTER TABLE bullets ADD COLUMN parent_id INTEGER`); err != nil {
+			return fmt.Errorf("add parent_id to bullets: %w", err)
+		}
+	}
+	// Outside the guard: a database created from schema.sql already has the
+	// column and still needs the index.
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_bullets_parent ON bullets(parent_id)`); err != nil {
+		return fmt.Errorf("index bullets.parent_id: %w", err)
+	}
+
 	// Emphasis terms arrived after the resumes table did.
 	if has, err := hasColumn(db, "resumes", "highlight"); err != nil {
 		return err
@@ -224,7 +239,7 @@ func retireClause(includeRetired bool, prefix string) string {
 // this list is structural (ids, versions, positions) or bookkeeping.
 var factColumns = map[string][]string{
 	"roles":           {"company", "location", "title", "start_date", "end_date", "summary"},
-	"bullets":         {"text", "tags"},
+	"bullets":         {"text", "tags", "parent_id"},
 	"projects":        {"name", "url", "date", "summary", "tags"},
 	"project_bullets": {"text", "tags"},
 	"patents":         {"patent_id", "url", "date", "summary"},
@@ -514,15 +529,16 @@ func (s *Store) ListRoles(sc factScope) ([]Role, error) {
 		return nil, err
 	}
 
-	brows, err := s.db.Query(`SELECT id, role_id, text, tags, source, position, COALESCE(retired_at, '')
-		FROM bullets` + factFilter("bullets", sc) + ` ORDER BY position, id`)
+	brows, err := s.db.Query(`SELECT id, role_id, COALESCE(parent_id, 0), text, tags, source, position,
+		COALESCE(retired_at, '') FROM bullets` + factFilter("bullets", sc) + ` ORDER BY position, id`)
 	if err != nil {
 		return nil, err
 	}
 	defer brows.Close()
 	for brows.Next() {
 		var b Bullet
-		if err := brows.Scan(&b.ID, &b.RoleID, &b.Text, &b.Tags, &b.Source, &b.Position, &b.RetiredAt); err != nil {
+		if err := brows.Scan(&b.ID, &b.RoleID, &b.ParentID, &b.Text, &b.Tags, &b.Source,
+			&b.Position, &b.RetiredAt); err != nil {
 			return nil, err
 		}
 		if i, ok := byFact[roleFact[b.RoleID]]; ok {
@@ -562,12 +578,36 @@ func (s *Store) DeleteRole(id int64) error {
 	return err
 }
 
+// NestRoleBullets groups each role's bullets under their parents, in place.
+// The fact mapping a child needs to find a corrected parent lives here, so
+// callers outside the store nest through this rather than building it again.
+func (s *Store) NestRoleBullets(roles []Role) error {
+	factOf, err := s.factIDOf("bullets")
+	if err != nil {
+		return err
+	}
+	for i := range roles {
+		roles[i].Bullets = NestBullets(roles[i].Bullets, factOf)
+	}
+	return nil
+}
+
+// nullID converts an unset id to NULL, so parent_id holds a real reference or
+// nothing. Zero is not a valid row id.
+func nullID(id int64) any {
+	if id == 0 {
+		return nil
+	}
+	return id
+}
+
 func (s *Store) AddBullet(b Bullet) (int64, error) {
 	if b.Source == "" {
 		b.Source = "resume"
 	}
-	res, err := s.db.Exec(`INSERT INTO bullets (role_id, text, tags, source, position) VALUES (?, ?, ?, ?, ?)`,
-		b.RoleID, b.Text, b.Tags, b.Source, b.Position)
+	res, err := s.db.Exec(
+		`INSERT INTO bullets (role_id, parent_id, text, tags, source, position) VALUES (?, ?, ?, ?, ?, ?)`,
+		b.RoleID, nullID(b.ParentID), b.Text, b.Tags, b.Source, b.Position)
 	if err != nil {
 		return 0, err
 	}

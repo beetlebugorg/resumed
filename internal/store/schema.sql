@@ -50,9 +50,13 @@ CREATE TABLE IF NOT EXISTS roles (
     retired_at TEXT
 );
 
+-- parent_id groups bullets under a lead-in bullet, so one engagement inside a
+-- role reads as a unit. It holds a bullet row id, and grouping resolves it
+-- through fact_id, so correcting a parent keeps its children.
 CREATE TABLE IF NOT EXISTS bullets (
     id       INTEGER PRIMARY KEY,
     role_id  INTEGER NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+    parent_id INTEGER REFERENCES bullets(id) ON DELETE SET NULL,
     text     TEXT NOT NULL,
     tags     TEXT NOT NULL DEFAULT '',       -- comma-separated, for matching
     source   TEXT NOT NULL DEFAULT 'resume', -- resume | interview | note
@@ -60,6 +64,9 @@ CREATE TABLE IF NOT EXISTS bullets (
     retired_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_bullets_role ON bullets(role_id);
+-- idx_bullets_parent is created in migrate, after the column exists. This file
+-- runs first, and on an existing database CREATE TABLE IF NOT EXISTS leaves the
+-- old bullets table in place, without parent_id for an index to name.
 
 CREATE TABLE IF NOT EXISTS projects (
     id       INTEGER PRIMARY KEY,

@@ -623,6 +623,11 @@ details.add-manual > *:not(summary) { margin-top: 0.6rem; }
   padding: 0 6px;
 }
 
+/* A bullet grouped under the lead-in above it. */
+.fact-child {
+  margin-left: 1.6rem;
+}
+
 /* Marks a caveat in the unfiltered view. */
 .tag.caveat {
   color: var(--warn);

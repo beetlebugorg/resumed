@@ -213,7 +213,7 @@ func registerFactTools(s *mcp.Server, a *app.App) {
 type FactUpdate struct {
 	Kind   string            `json:"kind" jsonschema:"one of: role, bullet, project, project_bullet, patent, skill"`
 	ID     int64             `json:"id" jsonschema:"the fact id from get_fact_base"`
-	Fields map[string]string `json:"fields" jsonschema:"fields to change. bullet and project_bullet take text and tags; role takes company, location, title, start_date, end_date, summary; project takes name, url, date, summary, tags; patent takes patent_id, url, date, summary; skill takes name and category"`
+	Fields map[string]string `json:"fields" jsonschema:"fields to change. bullet takes text, tags, and parent_id, where parent_id is the bullet id to group under and 0 detaches; project_bullet takes text and tags; role takes company, location, title, start_date, end_date, summary; project takes name, url, date, summary, tags; patent takes patent_id, url, date, summary; skill takes name and category"`
 }
 
 type UpdateFactsInput struct {
@@ -248,9 +248,10 @@ type RetireFactsOutput struct {
 }
 
 type NewBullet struct {
-	RoleID int64  `json:"role_id" jsonschema:"id of the role this bullet belongs to"`
-	Text   string `json:"text" jsonschema:"the accomplishment, one sentence, factual"`
-	Tags   string `json:"tags,omitempty" jsonschema:"comma-separated keywords for later matching"`
+	RoleID   int64  `json:"role_id" jsonschema:"id of the role this bullet belongs to"`
+	ParentID int64  `json:"parent_id,omitempty" jsonschema:"id of a bullet this one belongs under, for grouping one engagement inside a role; omit for a top-level bullet"`
+	Text     string `json:"text" jsonschema:"the accomplishment, one sentence, factual"`
+	Tags     string `json:"tags,omitempty" jsonschema:"comma-separated keywords for later matching"`
 }
 
 type NewSkill struct {
@@ -316,7 +317,7 @@ func addFacts(a *app.App, in AddFactsInput) (*mcp.CallToolResult, AddFactsOutput
 	}
 	for _, b := range in.Bullets {
 		id, err := a.Store.AddBullet(store.Bullet{
-			RoleID: b.RoleID, Text: b.Text, Tags: b.Tags, Source: source,
+			RoleID: b.RoleID, ParentID: b.ParentID, Text: b.Text, Tags: b.Tags, Source: source,
 		})
 		if err != nil {
 			return fail[AddFactsOutput]("add bullet: %w", err)

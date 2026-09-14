@@ -133,13 +133,60 @@ func (r Role) Dates() string {
 }
 
 type Bullet struct {
-	ID        int64  `json:"id"`
-	RoleID    int64  `json:"role_id"`
-	Text      string `json:"text"`
-	Tags      string `json:"tags,omitempty"`
-	Source    string `json:"source,omitempty"`
-	Position  int    `json:"-"`
-	RetiredAt string `json:"retired_at,omitempty"`
+	ID     int64 `json:"id"`
+	RoleID int64 `json:"role_id"`
+	// ParentID names a lead-in bullet this one belongs under, or 0. It holds a
+	// bullet row id; grouping resolves it through fact_id, so a corrected
+	// parent keeps its children.
+	ParentID  int64    `json:"parent_id,omitempty"`
+	Text      string   `json:"text"`
+	Tags      string   `json:"tags,omitempty"`
+	Source    string   `json:"source,omitempty"`
+	Position  int      `json:"-"`
+	RetiredAt string   `json:"retired_at,omitempty"`
+	Children  []Bullet `json:"children,omitempty"`
+}
+
+// NestBullets groups children under their parents and returns the top level.
+// factOf maps a bullet row id to its fact id, so a child written against an
+// earlier version of its parent still finds it. A child whose parent is absent
+// from the list stays at the top level, which is what happens when tailoring
+// selects a child and drops its lead-in.
+func NestBullets(bullets []Bullet, factOf map[int64]int64) []Bullet {
+	// Flatten first, so nesting an already-nested list returns the same shape
+	// instead of dropping the children held on the rows above.
+	flat := make([]Bullet, 0, len(bullets))
+	for _, b := range bullets {
+		children := b.Children
+		b.Children = nil
+		flat = append(flat, b)
+		for _, ch := range children {
+			ch.Children = nil
+			flat = append(flat, ch)
+		}
+	}
+
+	at := map[int64]int{}
+	var top []Bullet
+	for _, b := range flat {
+		if b.ParentID != 0 {
+			continue
+		}
+		at[factOf[b.ID]] = len(top)
+		top = append(top, b)
+	}
+	for _, b := range flat {
+		if b.ParentID == 0 {
+			continue
+		}
+		i, ok := at[factOf[b.ParentID]]
+		if !ok {
+			top = append(top, b)
+			continue
+		}
+		top[i].Children = append(top[i].Children, b)
+	}
+	return top
 }
 
 type Project struct {

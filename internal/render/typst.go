@@ -306,6 +306,10 @@ func Typst(doc *store.Document) string {
 				b.WriteString("  details: [\n")
 				for _, bl := range r.Bullets {
 					fmt.Fprintf(&b, "    - %s\n", escTerms(bl.Text, hi))
+					// Typst reads a deeper indent as a nested list.
+					for _, ch := range bl.Children {
+						fmt.Fprintf(&b, "      - %s\n", escTerms(ch.Text, hi))
+					}
 				}
 				b.WriteString("  ],\n")
 			}

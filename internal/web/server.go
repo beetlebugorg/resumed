@@ -1155,6 +1155,7 @@ type factRow struct {
 	Note    string // provenance or category
 	Retired bool
 	Caveat  bool // bounds a claim, and stays off a resume
+	Child   bool // renders indented under the bullet above it
 }
 
 // factGroup is a container fact (a role or project) plus its child rows. The
@@ -1259,8 +1260,12 @@ type factsPage struct {
 func (s *server) showFacts(w http.ResponseWriter, r *http.Request) {
 	// FactBaseAll: the facts page is where you retire and restore, so it has to
 	// show what is already retired.
-	fb, err := appOf(r).Store.FactBaseAll()
+	st := appOf(r).Store
+	fb, err := st.FactBaseAll()
 	if fail(w, err) {
+		return
+	}
+	if fail(w, st.NestRoleBullets(fb.Roles)) {
 		return
 	}
 
@@ -1299,19 +1304,34 @@ func (s *server) showFacts(w http.ResponseWriter, r *http.Request) {
 		}
 		count(role.Retired())
 		counts.add(false, role.Retired())
-		for _, b := range role.Bullets {
-			caveat := isCaveat(b.Tags)
-			count(b.Retired())
-			counts.add(caveat, b.Retired())
-			if !keepFact(show, caveat, b.Retired()) {
-				continue
-			}
+		row := func(b store.Bullet, child bool) factRow {
 			note := ""
 			if b.Source == "interview" {
 				note = "from interview"
 			}
-			g.Rows = append(g.Rows, factRow{Kind: store.KindBullet, ID: b.ID,
-				Text: b.Text, Note: note, Retired: b.Retired(), Caveat: caveat})
+			return factRow{Kind: store.KindBullet, ID: b.ID, Text: b.Text, Note: note,
+				Retired: b.Retired(), Caveat: isCaveat(b.Tags), Child: child}
+		}
+		for _, b := range role.Bullets {
+			caveat := isCaveat(b.Tags)
+			count(b.Retired())
+			counts.add(caveat, b.Retired())
+			kept := keepFact(show, caveat, b.Retired())
+			if kept {
+				g.Rows = append(g.Rows, row(b, false))
+			}
+			for _, ch := range b.Children {
+				chCaveat := isCaveat(ch.Tags)
+				count(ch.Retired())
+				counts.add(chCaveat, ch.Retired())
+				if !keepFact(show, chCaveat, ch.Retired()) {
+					continue
+				}
+				// A filter can drop the lead-in and keep a child. Indenting it
+				// under a bullet that is not there reads as a mistake, so it
+				// goes in at the top level.
+				g.Rows = append(g.Rows, row(ch, kept))
+			}
 		}
 		if keepGroup(len(g.Rows), role.Retired()) {
 			page.Experience = append(page.Experience, g)
