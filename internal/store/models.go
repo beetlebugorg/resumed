@@ -138,13 +138,17 @@ type Bullet struct {
 	// ParentID names a lead-in bullet this one belongs under, or 0. It holds a
 	// bullet row id; grouping resolves it through fact_id, so a corrected
 	// parent keeps its children.
-	ParentID  int64    `json:"parent_id,omitempty"`
-	Text      string   `json:"text"`
-	Tags      string   `json:"tags,omitempty"`
-	Source    string   `json:"source,omitempty"`
-	Position  int      `json:"-"`
-	RetiredAt string   `json:"retired_at,omitempty"`
-	Children  []Bullet `json:"children,omitempty"`
+	ParentID  int64  `json:"parent_id,omitempty"`
+	Text      string `json:"text"`
+	Tags      string `json:"tags,omitempty"`
+	Source    string `json:"source,omitempty"`
+	Position  int    `json:"-"`
+	RetiredAt string `json:"retired_at,omitempty"`
+	// Children is filled by NestBullets for rendering and is never serialized.
+	// The fact base is flat, and parent_id is what records the grouping. The
+	// json tag also keeps Bullet from referring to itself in a generated
+	// schema, which the MCP SDK rejects as a cycle.
+	Children []Bullet `json:"-"`
 }
 
 // NestBullets groups children under their parents and returns the top level.
