@@ -37,10 +37,22 @@ func (s *Store) Assemble(resumeID int64) (*Document, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Deliberately FactBaseAll: a stored resume references its facts by id and
-	// must keep rendering byte-for-byte even if one of them was later retired.
-	// Using FactBase here would break every version that cited a retired fact.
-	fb, err := s.FactBaseAll()
+	// Deliberately FactBaseHistory: a stored resume references its facts by row
+	// id and must keep rendering byte-for-byte even if one of them was later
+	// retired or corrected. Either narrower scope would break every version that
+	// cited a fact which has since moved on.
+	fb, err := s.FactBaseHistory()
+	if err != nil {
+		return nil, err
+	}
+	// A bullet's role_id names whichever version of its role existed when the
+	// bullet was written. The resume may well cite a later version. Both map to
+	// the same fact id, so containers and children are matched on that.
+	roleFact, err := s.factIDOf("roles")
+	if err != nil {
+		return nil, err
+	}
+	projFact, err := s.factIDOf("projects")
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +122,7 @@ func (s *Store) Assemble(resumeID int64) (*Document, error) {
 			if it.OverrideText != "" {
 				role.Summary = it.OverrideText
 			}
-			rolePos[it.RefID] = placed{pos: it.Position, idx: len(doc.Roles)}
+			rolePos[roleFact[it.RefID]] = placed{pos: it.Position, idx: len(doc.Roles)}
 			doc.Roles = append(doc.Roles, role)
 		case KindProject:
 			p, ok := projByID[it.RefID]
@@ -120,7 +132,7 @@ func (s *Store) Assemble(resumeID int64) (*Document, error) {
 			if it.OverrideText != "" {
 				p.Summary = it.OverrideText
 			}
-			projPos[it.RefID] = placed{pos: it.Position, idx: len(doc.Projects)}
+			projPos[projFact[it.RefID]] = placed{pos: it.Position, idx: len(doc.Projects)}
 			doc.Projects = append(doc.Projects, p)
 		case KindPatent:
 			p, ok := patentByID[it.RefID]
@@ -149,7 +161,7 @@ func (s *Store) Assemble(resumeID int64) (*Document, error) {
 			if it.OverrideText != "" {
 				b.Text = it.OverrideText
 			}
-			p, ok := rolePos[b.RoleID]
+			p, ok := rolePos[roleFact[b.RoleID]]
 			if !ok {
 				continue
 			}
@@ -163,7 +175,7 @@ func (s *Store) Assemble(resumeID int64) (*Document, error) {
 			if it.OverrideText != "" {
 				b.Text = it.OverrideText
 			}
-			p, ok := projPos[b.ProjectID]
+			p, ok := projPos[projFact[b.ProjectID]]
 			if !ok {
 				continue
 			}
@@ -174,10 +186,10 @@ func (s *Store) Assemble(resumeID int64) (*Document, error) {
 
 	// Sort containers by their item position, children by theirs.
 	sort.SliceStable(doc.Roles, func(i, j int) bool {
-		return rolePos[doc.Roles[i].ID].pos < rolePos[doc.Roles[j].ID].pos
+		return rolePos[roleFact[doc.Roles[i].ID]].pos < rolePos[roleFact[doc.Roles[j].ID]].pos
 	})
 	sort.SliceStable(doc.Projects, func(i, j int) bool {
-		return projPos[doc.Projects[i].ID].pos < projPos[doc.Projects[j].ID].pos
+		return projPos[projFact[doc.Projects[i].ID]].pos < projPos[projFact[doc.Projects[j].ID]].pos
 	})
 	for i := range doc.Roles {
 		sort.SliceStable(doc.Roles[i].Bullets, func(a, b int) bool {

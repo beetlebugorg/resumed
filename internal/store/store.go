@@ -156,19 +156,60 @@ func hasColumn(db *sql.DB, table, column string) (bool, error) {
 	return false, rows.Err()
 }
 
-// factFilter restricts a fact table to the rows new tailoring may select: the
-// current version of each fact, and not retired. Passing all=true returns every
-// row, which is what rendering a stored resume needs, since it points at the
-// version it was built from.
-func factFilter(table string, all bool) string {
-	if all {
+// factScope decides which rows of a versioned fact table a query sees. Retired
+// and superseded are different things and want different treatment: a retired
+// fact is still a fact you might restore, while a superseded version is just an
+// older wording of a fact that is already on screen.
+type factScope int
+
+const (
+	// scopeActive is what new tailoring may draw from: the current version of
+	// each fact, minus anything retired.
+	scopeActive factScope = iota
+	// scopeCurrent is the editing view: the current version of each fact,
+	// retired ones included so they can be restored. Superseded versions stay
+	// hidden, because listing them would show one row per edit.
+	scopeCurrent
+	// scopeHistory is every row ever written. Rendering a stored resume needs
+	// it, since the resume points at the exact version it was built from.
+	scopeHistory
+)
+
+// factFilter restricts a fact table to the rows a scope admits.
+func factFilter(table string, sc factScope) string {
+	if sc == scopeHistory {
 		return ""
 	}
 	// COALESCE because a row inserted without a fact_id is the first version of
 	// its own fact, and NULL never equals NULL in SQL.
-	return " WHERE id = (SELECT MAX(v.id) FROM " + table + " v" +
-		" WHERE COALESCE(v.fact_id, v.id) = COALESCE(" + table + ".fact_id, " + table + ".id))" +
-		" AND retired_at IS NULL"
+	current := " WHERE id = (SELECT MAX(v.id) FROM " + table + " v" +
+		" WHERE COALESCE(v.fact_id, v.id) = COALESCE(" + table + ".fact_id, " + table + ".id))"
+	if sc == scopeCurrent {
+		return current
+	}
+	return current + " AND retired_at IS NULL"
+}
+
+// factIDOf maps every row id in a versioned table to the stable fact id it
+// belongs to, superseded rows included. Children point at whichever version of
+// their parent existed when they were written, so attaching a child to its
+// parent has to go through this: correcting a parent gives it a new row id, but
+// never a new fact id.
+func (s *Store) factIDOf(table string) (map[int64]int64, error) {
+	rows, err := s.db.Query(`SELECT id, COALESCE(fact_id, id) FROM ` + table)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]int64{}
+	for rows.Next() {
+		var id, factID int64
+		if err := rows.Scan(&id, &factID); err != nil {
+			return nil, err
+		}
+		out[id] = factID
+	}
+	return out, rows.Err()
 }
 
 // retireClause filters out retired rows unless the caller wants them.
@@ -393,14 +434,19 @@ func (s *Store) DeleteContact(id int64) error {
 
 // FactBase returns the facts available for new tailoring. Retired facts are
 // excluded — that is what "retired" means.
-func (s *Store) FactBase() (*FactBase, error) { return s.factBase(false) }
+func (s *Store) FactBase() (*FactBase, error) { return s.factBase(scopeActive) }
 
-// FactBaseAll includes retired facts. Assemble needs this: a resume that was
-// already generated references its facts by id, and must keep rendering even
-// after one of them is retired.
-func (s *Store) FactBaseAll() (*FactBase, error) { return s.factBase(true) }
+// FactBaseAll includes retired facts, so the facts page can offer to restore
+// them. It still shows one row per fact: a correction supersedes the wording it
+// replaced rather than adding a second fact.
+func (s *Store) FactBaseAll() (*FactBase, error) { return s.factBase(scopeCurrent) }
 
-func (s *Store) factBase(includeRetired bool) (*FactBase, error) {
+// FactBaseHistory returns every version of every fact, retired or not. Assemble
+// needs this: a resume that was already generated references its facts by row
+// id, and must keep rendering the exact version it selected.
+func (s *Store) FactBaseHistory() (*FactBase, error) { return s.factBase(scopeHistory) }
+
+func (s *Store) factBase(sc factScope) (*FactBase, error) {
 	p, err := s.GetProfile()
 	if err != nil {
 		return nil, err
@@ -409,19 +455,19 @@ func (s *Store) factBase(includeRetired bool) (*FactBase, error) {
 	if err != nil {
 		return nil, err
 	}
-	roles, err := s.ListRoles(includeRetired)
+	roles, err := s.ListRoles(sc)
 	if err != nil {
 		return nil, err
 	}
-	projects, err := s.ListProjects(includeRetired)
+	projects, err := s.ListProjects(sc)
 	if err != nil {
 		return nil, err
 	}
-	patents, err := s.ListPatents(includeRetired)
+	patents, err := s.ListPatents(sc)
 	if err != nil {
 		return nil, err
 	}
-	skills, err := s.ListSkills(includeRetired)
+	skills, err := s.ListSkills(sc)
 	if err != nil {
 		return nil, err
 	}
@@ -435,23 +481,33 @@ func (s *Store) factBase(includeRetired bool) (*FactBase, error) {
 	}, nil
 }
 
-func (s *Store) ListRoles(includeRetired bool) ([]Role, error) {
+func (s *Store) ListRoles(sc factScope) ([]Role, error) {
+	// A bullet's role_id names the role row that existed when the bullet was
+	// written, which is not the current row once the role has been corrected.
+	// Both resolve to the same fact id, so group on that.
+	roleFact, err := s.factIDOf("roles")
+	if err != nil {
+		return nil, err
+	}
+
 	rows, err := s.db.Query(`
 		SELECT id, company, location, title, start_date, end_date, summary, position, COALESCE(retired_at, '')
-		FROM roles` + factFilter("roles", includeRetired) + ` ORDER BY position, id`)
+		FROM roles` + factFilter("roles", sc) + ` ORDER BY position, id`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var roles []Role
-	byID := map[int64]int{}
+	byFact := map[int64]int{}
 	for rows.Next() {
 		var r Role
 		if err := rows.Scan(&r.ID, &r.Company, &r.Location, &r.Title,
 			&r.StartDate, &r.EndDate, &r.Summary, &r.Position, &r.RetiredAt); err != nil {
 			return nil, err
 		}
-		byID[r.ID] = len(roles)
+		// Under scopeHistory several versions of one role are listed; the last
+		// wins the bullets so that every bullet still surfaces exactly once.
+		byFact[roleFact[r.ID]] = len(roles)
 		roles = append(roles, r)
 	}
 	if err := rows.Err(); err != nil {
@@ -459,7 +515,7 @@ func (s *Store) ListRoles(includeRetired bool) ([]Role, error) {
 	}
 
 	brows, err := s.db.Query(`SELECT id, role_id, text, tags, source, position, COALESCE(retired_at, '')
-		FROM bullets` + factFilter("bullets", includeRetired) + ` ORDER BY position, id`)
+		FROM bullets` + factFilter("bullets", sc) + ` ORDER BY position, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -469,7 +525,7 @@ func (s *Store) ListRoles(includeRetired bool) ([]Role, error) {
 		if err := brows.Scan(&b.ID, &b.RoleID, &b.Text, &b.Tags, &b.Source, &b.Position, &b.RetiredAt); err != nil {
 			return nil, err
 		}
-		if i, ok := byID[b.RoleID]; ok {
+		if i, ok := byFact[roleFact[b.RoleID]]; ok {
 			roles[i].Bullets = append(roles[i].Bullets, b)
 		}
 	}
@@ -523,21 +579,28 @@ func (s *Store) DeleteBullet(id int64) error {
 	return err
 }
 
-func (s *Store) ListProjects(includeRetired bool) ([]Project, error) {
+func (s *Store) ListProjects(sc factScope) ([]Project, error) {
+	// Same reasoning as ListRoles: group children on the parent's fact id, not
+	// on the row id they happen to point at.
+	projFact, err := s.factIDOf("projects")
+	if err != nil {
+		return nil, err
+	}
+
 	rows, err := s.db.Query(`SELECT id, name, url, date, summary, tags, position, COALESCE(retired_at, '')
-		FROM projects` + factFilter("projects", includeRetired) + ` ORDER BY position, id`)
+		FROM projects` + factFilter("projects", sc) + ` ORDER BY position, id`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var projects []Project
-	byID := map[int64]int{}
+	byFact := map[int64]int{}
 	for rows.Next() {
 		var p Project
 		if err := rows.Scan(&p.ID, &p.Name, &p.URL, &p.Date, &p.Summary, &p.Tags, &p.Position, &p.RetiredAt); err != nil {
 			return nil, err
 		}
-		byID[p.ID] = len(projects)
+		byFact[projFact[p.ID]] = len(projects)
 		projects = append(projects, p)
 	}
 	if err := rows.Err(); err != nil {
@@ -545,7 +608,7 @@ func (s *Store) ListProjects(includeRetired bool) ([]Project, error) {
 	}
 
 	brows, err := s.db.Query(`SELECT id, project_id, text, tags, source, position, COALESCE(retired_at, '')
-		FROM project_bullets` + factFilter("project_bullets", includeRetired) + ` ORDER BY position, id`)
+		FROM project_bullets` + factFilter("project_bullets", sc) + ` ORDER BY position, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -555,7 +618,7 @@ func (s *Store) ListProjects(includeRetired bool) ([]Project, error) {
 		if err := brows.Scan(&b.ID, &b.ProjectID, &b.Text, &b.Tags, &b.Source, &b.Position, &b.RetiredAt); err != nil {
 			return nil, err
 		}
-		if i, ok := byID[b.ProjectID]; ok {
+		if i, ok := byFact[projFact[b.ProjectID]]; ok {
 			projects[i].Bullets = append(projects[i].Bullets, b)
 		}
 	}
@@ -605,9 +668,9 @@ func (s *Store) DeleteProjectBullet(id int64) error {
 	return err
 }
 
-func (s *Store) ListPatents(includeRetired bool) ([]Patent, error) {
+func (s *Store) ListPatents(sc factScope) ([]Patent, error) {
 	rows, err := s.db.Query(`SELECT id, patent_id, url, date, summary, position, COALESCE(retired_at, '')
-		FROM patents` + factFilter("patents", includeRetired) + ` ORDER BY position, id`)
+		FROM patents` + factFilter("patents", sc) + ` ORDER BY position, id`)
 	if err != nil {
 		return nil, err
 	}
@@ -637,9 +700,9 @@ func (s *Store) DeletePatent(id int64) error {
 	return err
 }
 
-func (s *Store) ListSkills(includeRetired bool) ([]Skill, error) {
+func (s *Store) ListSkills(sc factScope) ([]Skill, error) {
 	rows, err := s.db.Query(`SELECT id, category, name, tags, position, COALESCE(retired_at, '')
-		FROM skills` + factFilter("skills", includeRetired) + ` ORDER BY position, id`)
+		FROM skills` + factFilter("skills", sc) + ` ORDER BY position, id`)
 	if err != nil {
 		return nil, err
 	}
