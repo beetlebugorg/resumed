@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	_ "modernc.org/sqlite" // pure-Go driver, no cgo
@@ -236,15 +237,27 @@ func retireClause(includeRetired bool, prefix string) string {
 }
 
 // factColumns are the fields UpdateFact may set, per table. Anything outside
-// this list is structural (ids, versions, positions) or bookkeeping.
+// this list is structural (ids, versions) or bookkeeping. Bullets also expose
+// position, because the order bullets read in is part of the writing, and
+// parent_id, which groups them.
 var factColumns = map[string][]string{
 	"roles":           {"company", "location", "title", "start_date", "end_date", "summary"},
-	"bullets":         {"text", "tags", "parent_id"},
+	"bullets":         {"text", "tags", "parent_id", "position"},
 	"projects":        {"name", "url", "date", "summary", "tags"},
-	"project_bullets": {"text", "tags"},
+	"project_bullets": {"text", "tags", "position"},
 	"patents":         {"patent_id", "url", "date", "summary"},
 	"skills":          {"name", "category"},
 }
+
+// numericColumns hold integers. Fields arrive as strings, and SQLite stores
+// whatever it is handed, so "soon" in position sorts as 0 forever with no sign
+// of why.
+var numericColumns = map[string]bool{"parent_id": true, "position": true}
+
+// nullableIDColumns reference another row, so 0 means no reference and has to
+// reach the column as NULL. Writing 0 fails the foreign key, because no row
+// has that id.
+var nullableIDColumns = map[string]bool{"parent_id": true}
 
 // UpdateFact records a correction as a new version of a fact. The old row stays
 // exactly as it is, so every resume that selected it renders the same text it
@@ -261,9 +274,14 @@ func (s *Store) UpdateFact(kind string, id int64, fields map[string]string) (int
 	if len(fields) == 0 {
 		return 0, fmt.Errorf("no fields to update")
 	}
-	for k := range fields {
+	for k, v := range fields {
 		if !slices.Contains(allowed, k) {
 			return 0, fmt.Errorf("%s has no updatable field %q", table, k)
+		}
+		if numericColumns[k] {
+			if _, err := strconv.Atoi(strings.TrimSpace(v)); err != nil {
+				return 0, fmt.Errorf("%s must be a whole number, got %q", k, v)
+			}
 		}
 	}
 
@@ -309,12 +327,23 @@ func (s *Store) UpdateFact(kind string, id int64, fields map[string]string) (int
 			values = append(values, "NULL")
 		default:
 			names = append(names, c)
-			if v, ok := fields[c]; ok {
-				values = append(values, "?")
-				args = append(args, v)
-			} else {
+			v, ok := fields[c]
+			if !ok {
 				values = append(values, c)
+				continue
 			}
+			values = append(values, "?")
+			if !numericColumns[c] {
+				args = append(args, v)
+				continue
+			}
+			// Validated above, so this parses.
+			n, _ := strconv.Atoi(strings.TrimSpace(v))
+			if n == 0 && nullableIDColumns[c] {
+				args = append(args, nil)
+				continue
+			}
+			args = append(args, n)
 		}
 	}
 

@@ -213,7 +213,7 @@ func registerFactTools(s *mcp.Server, a *app.App) {
 type FactUpdate struct {
 	Kind   string            `json:"kind" jsonschema:"one of: role, bullet, project, project_bullet, patent, skill"`
 	ID     int64             `json:"id" jsonschema:"the fact id from get_fact_base"`
-	Fields map[string]string `json:"fields" jsonschema:"fields to change. bullet takes text, tags, and parent_id, where parent_id is the bullet id to group under and 0 detaches; project_bullet takes text and tags; role takes company, location, title, start_date, end_date, summary; project takes name, url, date, summary, tags; patent takes patent_id, url, date, summary; skill takes name and category"`
+	Fields map[string]string `json:"fields" jsonschema:"fields to change. bullet takes text, tags, parent_id, and position, where parent_id is the bullet id to group under and 0 detaches, and position orders bullets within a role, lowest first; project_bullet takes text, tags, and position; role takes company, location, title, start_date, end_date, summary; project takes name, url, date, summary, tags; patent takes patent_id, url, date, summary; skill takes name and category"`
 }
 
 type UpdateFactsInput struct {
