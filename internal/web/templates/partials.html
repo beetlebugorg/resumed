@@ -182,12 +182,62 @@
     <span class="id">{{.ID}}</span>
     <span class="fact-text">{{.Text}}{{with .Note}} <span class="tag">{{.}}</span>{{end}}</span>
     <button class="link fact-action"
+            hx-get="/facts/{{.Kind}}/{{.ID}}/edit"
+            hx-target="#fact-{{.Kind}}-{{.ID}}"
+            hx-swap="outerHTML"
+            title="Correct the wording. Resumes already generated keep the version they cite."
+        >edit</button>
+    <button class="link fact-action"
             hx-post="/facts/{{.Kind}}/{{.ID}}/{{if .Retired}}restore{{else}}retire{{end}}"
             hx-target="#fact-{{.Kind}}-{{.ID}}"
             hx-swap="outerHTML"
             title="{{if .Retired}}Use this fact again{{else}}Keep this fact but stop using it in new resumes{{end}}"
         >{{if .Retired}}restore{{else}}retire{{end}}</button>
   </li>
+{{end}}
+
+{{/* The form body is shared; only the wrapping element differs, because a
+     bullet is an <li> inside a list and a role is a block of its own. */}}
+{{define "fact-form"}}
+  <form class="fact-form"
+        hx-post="/facts/{{.Kind}}/{{.ID}}/save"
+        hx-target="#fact-{{.Kind}}-{{.ID}}"
+        hx-swap="outerHTML">
+    <div class="fact-form-head">
+      <span class="id">{{.ID}}</span>
+      {{with .Context}}<span class="muted">{{.}}</span>{{end}}
+    </div>
+    {{range .Fields}}
+      <label class="fact-field">
+        <span>{{.Label}}</span>
+        {{if .Multi}}
+          <textarea name="{{.Name}}" rows="3">{{.Value}}</textarea>
+        {{else}}
+          <input type="text" name="{{.Name}}" value="{{.Value}}">
+        {{end}}
+      </label>
+    {{end}}
+    <div class="fact-form-actions">
+      <button type="submit">Save</button>
+      {{if .Group}}
+        <button type="button" class="link" onclick="window.location.reload()">Cancel</button>
+      {{else}}
+        <button type="button" class="link"
+                hx-get="/facts/{{.Kind}}/{{.ID}}"
+                hx-target="#fact-{{.Kind}}-{{.ID}}"
+                hx-swap="outerHTML">Cancel</button>
+      {{end}}
+      <span class="muted fact-form-note">Saved as a new version. Resumes already generated are untouched.</span>
+    </div>
+  </form>
+{{end}}
+
+{{define "fact-edit"}}
+  <li class="fact-row fact-editing" id="fact-{{.Kind}}-{{.ID}}">{{template "fact-form" .}}</li>
+{{end}}
+
+{{define "fact-group-edit"}}
+  <div class="fact-role fact-editing" id="fact-{{.Kind}}-{{.ID}}">{{template "fact-form" .}}</div>
 {{end}}
 
 

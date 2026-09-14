@@ -25,7 +25,7 @@
 
   <h2>Experience</h2>
   {{range .Experience}}
-    <div class="fact-role{{if .Retired}} retired{{end}}">
+    <div class="fact-role{{if .Retired}} retired{{end}}" id="fact-{{.Kind}}-{{.ID}}">
       <div class="fact-role-head">
         <div>
           <span class="id">{{.ID}}</span>
@@ -33,6 +33,12 @@
         </div>
         <div class="fact-actions">
           <span class="muted" style="font-size:0.82rem">{{.Meta}}</span>
+          <button class="link fact-action"
+                  hx-get="/facts/{{.Kind}}/{{.ID}}/edit"
+                  hx-target="#fact-{{.Kind}}-{{.ID}}"
+                  hx-swap="outerHTML"
+                  title="Correct this role. Resumes already generated keep the version they cite."
+              >edit</button>
           <button class="link fact-action"
                   hx-post="/facts/{{.Kind}}/{{.ID}}/{{if .Retired}}restore{{else}}retire{{end}}"
                   hx-target="closest .fact-role"
@@ -63,11 +69,17 @@
   {{with .Projects}}
     <h2>Projects</h2>
     {{range .}}
-      <div class="fact-role{{if .Retired}} retired{{end}}">
+      <div class="fact-role{{if .Retired}} retired{{end}}" id="fact-{{.Kind}}-{{.ID}}">
         <div class="fact-role-head">
           <div><span class="id">{{.ID}}</span> <strong>{{.Text}}</strong></div>
           <div class="fact-actions">
             <span class="muted" style="font-size:0.82rem">{{.Meta}}</span>
+            <button class="link fact-action"
+                    hx-get="/facts/{{.Kind}}/{{.ID}}/edit"
+                    hx-target="#fact-{{.Kind}}-{{.ID}}"
+                    hx-swap="outerHTML"
+                    title="Correct this project. Resumes already generated keep the version they cite."
+                >edit</button>
             <button class="link fact-action"
                     hx-post="/facts/{{.Kind}}/{{.ID}}/{{if .Retired}}restore{{else}}retire{{end}}"
                     hx-swap="none"

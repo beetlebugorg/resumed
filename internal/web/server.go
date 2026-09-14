@@ -235,8 +235,19 @@ func Serve(reopen func() (*store.Store, error), outRoot, addr string) error {
 		return fmt.Errorf("static assets: %w", err)
 	}
 
-	// Routes that read or write the database. Everything registered here is
-	// wrapped so the connection lives only as long as the request.
+	// The embedded assets need no database.
+	top := http.NewServeMux()
+	top.Handle("GET /static/", http.StripPrefix("/static/", assetHandler))
+	top.Handle("/", s.withStore(s.routes()))
+
+	fmt.Printf("resumed: http://%s\n", addr)
+	return http.ListenAndServe(addr, top)
+}
+
+// routes registers everything that reads or writes the database. It is split
+// out from Serve so a test can drive the handlers through the real mux, which
+// is where the path patterns themselves get exercised.
+func (s *server) routes() *http.ServeMux {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /{$}", s.listJobs)
@@ -257,7 +268,11 @@ func Serve(reopen func() (*store.Store, error), outRoot, addr string) error {
 	mux.HandleFunc("POST /questions/{id}/dismiss", s.dismissQuestion)
 
 	mux.HandleFunc("GET /facts", s.showFacts)
-	mux.HandleFunc("POST /facts/{kind}/{id}/{verb}", s.setFactRetired)
+	mux.HandleFunc("GET /facts/{kind}/{id}", s.showFactRow)
+	mux.HandleFunc("GET /facts/{kind}/{id}/edit", s.editFact)
+	mux.HandleFunc("POST /facts/{kind}/{id}/save", s.saveFact)
+	mux.HandleFunc("POST /facts/{kind}/{id}/retire", s.setFactRetired)
+	mux.HandleFunc("POST /facts/{kind}/{id}/restore", s.setFactRetired)
 
 	mux.HandleFunc("GET /resumes/{id}", s.showResume)
 	mux.HandleFunc("GET /resumes/{id}/pdf", s.resumePDF)
@@ -270,13 +285,7 @@ func Serve(reopen func() (*store.Store, error), outRoot, addr string) error {
 	mux.HandleFunc("GET /cover-letters/{id}/typst", s.coverTypst)
 	mux.HandleFunc("POST /cover-letters/{id}/render", s.renderCover)
 
-	// The embedded assets need no database.
-	top := http.NewServeMux()
-	top.Handle("GET /static/", http.StripPrefix("/static/", assetHandler))
-	top.Handle("/", s.withStore(mux))
-
-	fmt.Printf("resumed: http://%s\n", addr)
-	return http.ListenAndServe(addr, top)
+	return mux
 }
 
 // ------------------------------------------------------------- view models
@@ -1247,7 +1256,9 @@ func (s *server) showFacts(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "facts.html", page)
 }
 
-// setFactRetired handles both retire and restore, keyed off the URL verb.
+// setFactRetired handles both retire and restore, keyed off the URL verb. The
+// two verbs are routed explicitly, so anything reaching here is one or the
+// other — an unrecognised verb 404s at the mux rather than quietly restoring.
 func (s *server) setFactRetired(w http.ResponseWriter, r *http.Request) {
 	kind := r.PathValue("kind")
 	id, err := pathID(r, "id")
@@ -1255,7 +1266,7 @@ func (s *server) setFactRetired(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	retire := r.PathValue("verb") == "retire"
+	retire := strings.HasSuffix(r.URL.Path, "/retire")
 	if err := appOf(r).Store.SetFactRetired(kind, id, retire); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
