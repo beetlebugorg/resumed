@@ -1154,6 +1154,7 @@ type factRow struct {
 	Text    string
 	Note    string // provenance or category
 	Retired bool
+	Caveat  bool // bounds a claim, and stays off a resume
 }
 
 // factGroup is a container fact (a role or project) plus its child rows. The
@@ -1170,6 +1171,78 @@ type skillGroup struct {
 	Rows     []factRow
 }
 
+// The fact base holds two kinds of statement. Most are material a resume can
+// quote. The rest bound a claim, such as "no production Go", and are recorded
+// so a later tailoring pass does not overreach. These three views select
+// between them.
+const (
+	factsAll     = "all"
+	factsResume  = "resume"
+	factsCaveats = "caveats"
+)
+
+// caveatTags mark a bounding fact. The schema does not separate the two kinds,
+// so an untagged caveat reads as resume material.
+var caveatTags = map[string]bool{
+	"caveat":         true,
+	"boundary":       true,
+	"gap":            true,
+	"not-for-resume": true,
+}
+
+func isCaveat(tags string) bool {
+	for _, t := range strings.Split(tags, ",") {
+		if caveatTags[strings.TrimSpace(t)] {
+			return true
+		}
+	}
+	return false
+}
+
+// keepFact reports whether a row belongs in the requested view. A retired
+// caveat stays visible under Caveats.
+func keepFact(show string, caveat, retired bool) bool {
+	switch show {
+	case factsResume:
+		return !caveat && !retired
+	case factsCaveats:
+		return caveat
+	}
+	return true
+}
+
+// factCounts tallies every row in the fact base, so the tab counts are the
+// same in every view.
+type factCounts struct{ All, Resume, Caveats int }
+
+func (c *factCounts) add(caveat, retired bool) {
+	c.All++
+	switch {
+	case caveat:
+		c.Caveats++
+	case !retired:
+		c.Resume++
+	}
+}
+
+func factTabs(show string, c factCounts) tabsView {
+	v := tabsView{}
+	for _, t := range []struct {
+		key, label string
+		n          int
+	}{
+		{factsResume, "Resume material", c.Resume},
+		{factsCaveats, "Caveats", c.Caveats},
+		{factsAll, "All", c.All},
+	} {
+		v.Tabs = append(v.Tabs, tabLink{
+			Key: t.key, Label: t.label, Count: t.n,
+			Href: "/facts?show=" + t.key, On: show == t.key,
+		})
+	}
+	return v
+}
+
 type factsPage struct {
 	chrome
 	Profile      store.Profile
@@ -1179,6 +1252,8 @@ type factsPage struct {
 	Skills       []skillGroup
 	Patents      []factRow
 	RetiredCount int
+	Show         string
+	Tabs         tabsView
 }
 
 func (s *server) showFacts(w http.ResponseWriter, r *http.Request) {
@@ -1188,16 +1263,32 @@ func (s *server) showFacts(w http.ResponseWriter, r *http.Request) {
 	if fail(w, err) {
 		return
 	}
+
+	show := r.URL.Query().Get("show")
+	if show != factsResume && show != factsCaveats {
+		show = factsAll
+	}
+
 	page := factsPage{
 		chrome: chrome{Title: "Facts", Nav: "facts", OpenCount: s.openCount(r),
 			Flash: r.URL.Query().Get("flash")},
-		Profile: fb.Profile, Contacts: fb.Contacts,
+		Profile: fb.Profile, Contacts: fb.Contacts, Show: show,
 	}
 
+	var counts factCounts
 	count := func(retired bool) {
 		if retired {
 			page.RetiredCount++
 		}
+	}
+
+	// A role or project heading has no tags, so it is always resume material.
+	// Under Caveats it appears only when it has caveat rows.
+	keepGroup := func(rows int, retired bool) bool {
+		if show == factsCaveats {
+			return rows > 0
+		}
+		return keepFact(show, false, retired)
 	}
 
 	for _, role := range fb.Roles {
@@ -1207,16 +1298,24 @@ func (s *server) showFacts(w http.ResponseWriter, r *http.Request) {
 			Meta: role.Dates(), Sub: role.Summary,
 		}
 		count(role.Retired())
+		counts.add(false, role.Retired())
 		for _, b := range role.Bullets {
+			caveat := isCaveat(b.Tags)
+			count(b.Retired())
+			counts.add(caveat, b.Retired())
+			if !keepFact(show, caveat, b.Retired()) {
+				continue
+			}
 			note := ""
 			if b.Source == "interview" {
 				note = "from interview"
 			}
 			g.Rows = append(g.Rows, factRow{Kind: store.KindBullet, ID: b.ID,
-				Text: b.Text, Note: note, Retired: b.Retired()})
-			count(b.Retired())
+				Text: b.Text, Note: note, Retired: b.Retired(), Caveat: caveat})
 		}
-		page.Experience = append(page.Experience, g)
+		if keepGroup(len(g.Rows), role.Retired()) {
+			page.Experience = append(page.Experience, g)
+		}
 	}
 
 	for _, p := range fb.Projects {
@@ -1225,34 +1324,53 @@ func (s *server) showFacts(w http.ResponseWriter, r *http.Request) {
 			Meta:    p.Date, Sub: p.Summary,
 		}
 		count(p.Retired())
+		counts.add(false, p.Retired())
 		for _, b := range p.Bullets {
-			g.Rows = append(g.Rows, factRow{Kind: store.KindProjectBullet, ID: b.ID,
-				Text: b.Text, Retired: b.Retired()})
+			caveat := isCaveat(b.Tags)
 			count(b.Retired())
+			counts.add(caveat, b.Retired())
+			if !keepFact(show, caveat, b.Retired()) {
+				continue
+			}
+			g.Rows = append(g.Rows, factRow{Kind: store.KindProjectBullet, ID: b.ID,
+				Text: b.Text, Retired: b.Retired(), Caveat: caveat})
 		}
-		page.Projects = append(page.Projects, g)
+		if keepGroup(len(g.Rows), p.Retired()) {
+			page.Projects = append(page.Projects, g)
+		}
 	}
 
 	var order []string
 	byCat := map[string][]factRow{}
 	for _, sk := range fb.Skills {
+		caveat := isCaveat(sk.Tags)
+		count(sk.Retired())
+		counts.add(caveat, sk.Retired())
+		if !keepFact(show, caveat, sk.Retired()) {
+			continue
+		}
 		if _, seen := byCat[sk.Category]; !seen {
 			order = append(order, sk.Category)
 		}
 		byCat[sk.Category] = append(byCat[sk.Category], factRow{
-			Kind: store.KindSkill, ID: sk.ID, Text: sk.Name, Retired: sk.Retired()})
-		count(sk.Retired())
+			Kind: store.KindSkill, ID: sk.ID, Text: sk.Name,
+			Retired: sk.Retired(), Caveat: caveat})
 	}
 	for _, cat := range order {
 		page.Skills = append(page.Skills, skillGroup{Category: cat, Rows: byCat[cat]})
 	}
 
 	for _, p := range fb.Patents {
+		count(p.Retired())
+		counts.add(false, p.Retired())
+		if !keepFact(show, false, p.Retired()) {
+			continue
+		}
 		page.Patents = append(page.Patents, factRow{Kind: store.KindPatent, ID: p.ID,
 			Text: p.PatentID + " — " + p.Summary, Retired: p.Retired()})
-		count(p.Retired())
 	}
 
+	page.Tabs = factTabs(show, counts)
 	s.render(w, "facts.html", page)
 }
 

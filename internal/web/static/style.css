@@ -623,6 +623,19 @@ details.add-manual > *:not(summary) { margin-top: 0.6rem; }
   padding: 0 6px;
 }
 
+/* Marks a caveat in the unfiltered view. */
+.tag.caveat {
+  color: var(--warn);
+  background: var(--warn-soft);
+}
+
+/* The job pane draws its own border below the strip. The facts page does not,
+   so the rule and the margin go here. */
+.fact-tabs {
+  margin-bottom: 1.4rem;
+  border-bottom: 1px solid var(--rule);
+}
+
 /* ------------------------------------------------------- resume reading view */
 
 /* The bar sits above the document rather than on it: the paper below should

@@ -180,7 +180,7 @@
 {{define "fact-row"}}
   <li class="fact-row{{if .Retired}} retired{{end}}" id="fact-{{.Kind}}-{{.ID}}">
     <span class="id">{{.ID}}</span>
-    <span class="fact-text">{{.Text}}{{with .Note}} <span class="tag">{{.}}</span>{{end}}</span>
+    <span class="fact-text">{{.Text}}{{if .Caveat}} <span class="tag caveat">caveat</span>{{end}}{{with .Note}} <span class="tag">{{.}}</span>{{end}}</span>
     <button class="link fact-action"
             hx-get="/facts/{{.Kind}}/{{.ID}}/edit"
             hx-target="#fact-{{.Kind}}-{{.ID}}"

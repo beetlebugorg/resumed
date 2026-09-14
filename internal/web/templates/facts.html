@@ -9,6 +9,23 @@
     {{if .RetiredCount}}<br><span class="muted">{{.RetiredCount}} fact(s) retired.</span>{{end}}
   </p>
 
+  {{/* The views are split by tag, so an untagged caveat appears under Resume
+       material. */}}
+  <nav class="tabs fact-tabs">
+    {{range .Tabs.Tabs}}
+      <a class="tab{{if .On}} on{{end}}" href="{{.Href}}"
+         {{if .On}}aria-current="page"{{end}}>{{.Label}} <span class="tab-n">{{.Count}}</span></a>
+    {{end}}
+  </nav>
+
+  {{if eq .Show "caveats"}}
+    <p class="sub">Facts that bound a claim. They keep a tailored resume accurate
+    and are never quoted on one.</p>
+  {{else if eq .Show "resume"}}
+    <p class="sub">Everything a resume can quote. Caveats and retired facts are
+    excluded.</p>
+  {{end}}
+
   {{with .Profile}}
     <div class="card">
       <div class="card-title">{{.Name}}</div>
