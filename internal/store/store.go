@@ -529,7 +529,13 @@ func (s *Store) ListRoles(sc factScope) ([]Role, error) {
 			roles[i].Bullets = append(roles[i].Bullets, b)
 		}
 	}
-	return roles, brows.Err()
+	if err := brows.Err(); err != nil {
+		return nil, err
+	}
+	// byFact holds indexes into this slice, so sorting runs after the bullets
+	// are attached.
+	SortRolesByDate(roles)
+	return roles, nil
 }
 
 func (s *Store) AddRole(r Role) (int64, error) {
@@ -622,7 +628,13 @@ func (s *Store) ListProjects(sc factScope) ([]Project, error) {
 			projects[i].Bullets = append(projects[i].Bullets, b)
 		}
 	}
-	return projects, brows.Err()
+	if err := brows.Err(); err != nil {
+		return nil, err
+	}
+	// byFact holds indexes into this slice, so sorting runs after the bullets
+	// are attached.
+	SortProjectsByDate(projects)
+	return projects, nil
 }
 
 func (s *Store) AddProject(p Project) (int64, error) {

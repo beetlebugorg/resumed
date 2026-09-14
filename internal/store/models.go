@@ -1,6 +1,11 @@
 package store
 
-import "strings"
+import (
+	"cmp"
+	"slices"
+	"strconv"
+	"strings"
+)
 
 // Fact-base types. These describe things that are actually true; tailoring may
 // select and reword them but never invent new ones.
@@ -30,6 +35,89 @@ type Role struct {
 	Position  int      `json:"-"`
 	RetiredAt string   `json:"retired_at,omitempty"`
 	Bullets   []Bullet `json:"bullets,omitempty"`
+}
+
+// Dates in the fact base are free text, "Aug 2023" or "Present", because that
+// is what a resume prints. Ordering them means reading that text back.
+var monthOrder = map[string]int{
+	"jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+	"jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+
+// dateKey converts a date to a comparable year-month. "Present" returns a
+// value above every real date. Text the parser does not recognize returns 0,
+// which orders it last.
+func dateKey(s string) int {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0
+	}
+	if strings.EqualFold(s, "present") || strings.EqualFold(s, "current") {
+		return 1 << 30
+	}
+	var month, year int
+	for _, f := range strings.Fields(strings.ReplaceAll(s, ",", " ")) {
+		lower := strings.ToLower(f)
+		if len(lower) >= 3 {
+			if m, ok := monthOrder[lower[:3]]; ok {
+				month = m
+				continue
+			}
+		}
+		// A four-digit year is the only number in a date line.
+		if n, err := strconv.Atoi(f); err == nil && n > 1900 && n < 2200 {
+			year = n
+		}
+	}
+	if year == 0 {
+		return 0
+	}
+	return year*100 + month
+}
+
+// SortRolesByDate orders roles newest first by start date, then by end date,
+// then by stored position.
+func SortRolesByDate(roles []Role) {
+	slices.SortStableFunc(roles, func(a, b Role) int {
+		if c := cmp.Compare(dateKey(b.StartDate), dateKey(a.StartDate)); c != 0 {
+			return c
+		}
+		// Of two roles beginning in the same month, the one that ran later
+		// goes first, so a promotion precedes the job it followed.
+		if c := cmp.Compare(dateKey(b.EndDate), dateKey(a.EndDate)); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.Position, b.Position)
+	})
+}
+
+// splitRange separates a project's single date string, "2018 - 2020" or
+// "2026 - Present", into start and end. A role stores the two in separate
+// columns. The hyphen is tried last so an en dash matches first.
+func splitRange(s string) (start, end string) {
+	for _, sep := range []string{"–", "—", " to ", "-"} {
+		if i := strings.Index(s, sep); i >= 0 {
+			return strings.TrimSpace(s[:i]), strings.TrimSpace(s[i+len(sep):])
+		}
+	}
+	return strings.TrimSpace(s), ""
+}
+
+// SortProjectsByDate orders projects by end date, then start date, then
+// stored position. A project that began years before the others and is
+// still running sorts below all of them under a start-date order.
+func SortProjectsByDate(projects []Project) {
+	slices.SortStableFunc(projects, func(a, b Project) int {
+		aStart, aEnd := splitRange(a.Date)
+		bStart, bEnd := splitRange(b.Date)
+		if c := cmp.Compare(dateKey(bEnd), dateKey(aEnd)); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(dateKey(bStart), dateKey(aStart)); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.Position, b.Position)
+	})
 }
 
 // Dates renders the "Oct 2018 - Aug 2023" form used on the resume.
