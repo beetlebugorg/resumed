@@ -70,10 +70,29 @@ var funcs = template.FuncMap{
 	// highlight applies the resume's emphasis terms, so the screen and the PDF
 	// agree about what is bold.
 	"highlight": render.HighlightHTML,
-	"shortDate": shortDate,
-	"briefDate": briefDate,
-	"relTime":   relTime,
-	"fullTime":  fullTime,
+	// bulletTree renders a bullet list to any depth. A template cannot recurse
+	// while carrying the highlight terms, so the recursion happens here.
+	"bulletTree": bulletTree,
+	"shortDate":  shortDate,
+	"briefDate":  briefDate,
+	"relTime":    relTime,
+	"fullTime":   fullTime,
+}
+
+func bulletTree(bullets []store.Bullet, terms []string) template.HTML {
+	if len(bullets) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("<ul>")
+	for _, bl := range bullets {
+		b.WriteString("<li>")
+		b.WriteString(string(render.HighlightHTML(bl.Text, terms)))
+		b.WriteString(string(bulletTree(bl.Children, terms)))
+		b.WriteString("</li>")
+	}
+	b.WriteString("</ul>")
+	return template.HTML(b.String())
 }
 
 // SQLite's datetime('now') writes UTC.
@@ -1155,7 +1174,7 @@ type factRow struct {
 	Note    string // provenance or category
 	Retired bool
 	Caveat  bool // bounds a claim, and stays off a resume
-	Child   bool // renders indented under the bullet above it
+	Depth   int  // how far to indent under the lead-in above it
 }
 
 // factGroup is a container fact (a role or project) plus its child rows. The
@@ -1304,35 +1323,29 @@ func (s *server) showFacts(w http.ResponseWriter, r *http.Request) {
 		}
 		count(role.Retired())
 		counts.add(false, role.Retired())
-		row := func(b store.Bullet, child bool) factRow {
-			note := ""
-			if b.Source == "interview" {
-				note = "from interview"
-			}
-			return factRow{Kind: store.KindBullet, ID: b.ID, Text: b.Text, Note: note,
-				Retired: b.Retired(), Caveat: isCaveat(b.Tags), Child: child}
-		}
-		for _, b := range role.Bullets {
-			caveat := isCaveat(b.Tags)
-			count(b.Retired())
-			counts.add(caveat, b.Retired())
-			kept := keepFact(show, caveat, b.Retired())
-			if kept {
-				g.Rows = append(g.Rows, row(b, false))
-			}
-			for _, ch := range b.Children {
-				chCaveat := isCaveat(ch.Tags)
-				count(ch.Retired())
-				counts.add(chCaveat, ch.Retired())
-				if !keepFact(show, chCaveat, ch.Retired()) {
+		var walk func([]store.Bullet, int)
+		walk = func(bullets []store.Bullet, depth int) {
+			for _, b := range bullets {
+				caveat := isCaveat(b.Tags)
+				count(b.Retired())
+				counts.add(caveat, b.Retired())
+				if !keepFact(show, caveat, b.Retired()) {
+					// The filter dropped this one. Its children move up a
+					// level, so they are not indented under a missing row.
+					walk(b.Children, depth)
 					continue
 				}
-				// A filter can drop the lead-in and keep a child. Indenting it
-				// under a bullet that is not there reads as a mistake, so it
-				// goes in at the top level.
-				g.Rows = append(g.Rows, row(ch, kept))
+				note := ""
+				if b.Source == "interview" {
+					note = "from interview"
+				}
+				g.Rows = append(g.Rows, factRow{Kind: store.KindBullet, ID: b.ID,
+					Text: b.Text, Note: note, Retired: b.Retired(),
+					Caveat: caveat, Depth: depth})
+				walk(b.Children, depth+1)
 			}
 		}
+		walk(role.Bullets, 0)
 		if keepGroup(len(g.Rows), role.Retired()) {
 			page.Experience = append(page.Experience, g)
 		}

@@ -85,3 +85,59 @@ func TestNestBulletsIsIdempotent(t *testing.T) {
 		t.Errorf("child is bullet %d, want 2", twice[0].Children[0].ID)
 	}
 }
+
+// parent_id can chain, so a bullet under a bullet under a lead-in has to nest
+// three deep rather than flattening.
+func TestNestBulletsGoesDeeperThanOneLevel(t *testing.T) {
+	top := NestBullets([]Bullet{
+		{ID: 1, Text: "engagement"},
+		{ID: 2, ParentID: 1, Text: "gitops"},
+		{ID: 3, ParentID: 2, Text: "ephemeral environment per PR"},
+		{ID: 4, ParentID: 2, Text: "scale to zero"},
+	}, selfFacts(1, 2, 3, 4))
+
+	if len(top) != 1 {
+		t.Fatalf("got %d top-level bullets, want 1: %v", len(top), bulletIDs(top))
+	}
+	if len(top[0].Children) != 1 {
+		t.Fatalf("engagement has %d children, want 1", len(top[0].Children))
+	}
+	gitops := top[0].Children[0]
+	if gitops.ID != 2 {
+		t.Fatalf("child is bullet %d, want 2", gitops.ID)
+	}
+	if len(gitops.Children) != 2 {
+		t.Fatalf("gitops has %d children, want 2", len(gitops.Children))
+	}
+	if gitops.Children[0].ID != 3 || gitops.Children[1].ID != 4 {
+		t.Errorf("grandchildren are %d and %d, want 3 and 4",
+			gitops.Children[0].ID, gitops.Children[1].ID)
+	}
+}
+
+// A parent chain that loops would recurse until the stack runs out.
+func TestNestBulletsSurvivesALoop(t *testing.T) {
+	top := NestBullets([]Bullet{
+		{ID: 1, ParentID: 2, Text: "a"},
+		{ID: 2, ParentID: 1, Text: "b"},
+	}, selfFacts(1, 2))
+	if len(top) == 0 {
+		t.Fatal("a loop swallowed every bullet")
+	}
+}
+
+// A bullet naming itself is the shortest loop.
+func TestNestBulletsIgnoresSelfParent(t *testing.T) {
+	top := NestBullets([]Bullet{{ID: 1, ParentID: 1, Text: "a"}}, selfFacts(1))
+	if len(top) != 1 || len(top[0].Children) != 0 {
+		t.Fatalf("got %d top-level with %d children, want 1 and 0", len(top), len(top[0].Children))
+	}
+}
+
+func bulletIDs(bs []Bullet) []int64 {
+	out := make([]int64, len(bs))
+	for i, b := range bs {
+		out[i] = b.ID
+	}
+	return out
+}

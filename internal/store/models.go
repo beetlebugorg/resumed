@@ -151,46 +151,88 @@ type Bullet struct {
 	Children []Bullet `json:"-"`
 }
 
-// NestBullets groups children under their parents and returns the top level.
-// factOf maps a bullet row id to its fact id, so a child written against an
-// earlier version of its parent still finds it. A child whose parent is absent
-// from the list stays at the top level, which is what happens when tailoring
-// selects a child and drops its lead-in.
+// NestBullets groups children under their parents and returns the top level,
+// to whatever depth parent_id goes. factOf maps a bullet row id to its fact id,
+// so a child written against an earlier version of its parent still finds it.
+// A child whose parent is absent from the list stays at the top level, which
+// tailoring causes by selecting a child and dropping its lead-in.
 func NestBullets(bullets []Bullet, factOf map[int64]int64) []Bullet {
 	// Flatten first, so nesting an already-nested list returns the same shape
 	// instead of dropping the children held on the rows above.
-	flat := make([]Bullet, 0, len(bullets))
-	for _, b := range bullets {
-		children := b.Children
-		b.Children = nil
-		flat = append(flat, b)
-		for _, ch := range children {
-			ch.Children = nil
-			flat = append(flat, ch)
+	flat := flattenBullets(bullets)
+
+	// Index by fact id, so a child naming any version of its parent finds the
+	// copy that is in this list.
+	at := make(map[int64]int, len(flat))
+	for i, b := range flat {
+		at[factOf[b.ID]] = i
+	}
+
+	parent := make([]int, len(flat))
+	for i := range flat {
+		parent[i] = -1
+		if flat[i].ParentID == 0 {
+			continue
+		}
+		if j, ok := at[factOf[flat[i].ParentID]]; ok && j != i {
+			parent[i] = j
 		}
 	}
 
-	at := map[int64]int{}
-	var top []Bullet
-	for _, b := range flat {
-		if b.ParentID != 0 {
-			continue
+	// A parent chain that loops back on itself would recurse until the stack
+	// runs out. Walking further than the list is long proves a loop, and the
+	// bullet that closes it becomes a root.
+	for i := range parent {
+		steps, j := 0, parent[i]
+		for j != -1 && steps <= len(flat) {
+			j = parent[j]
+			steps++
 		}
-		at[factOf[b.ID]] = len(top)
-		top = append(top, b)
+		if steps > len(flat) {
+			parent[i] = -1
+		}
 	}
-	for _, b := range flat {
-		if b.ParentID == 0 {
+
+	kids := make([][]int, len(flat))
+	var roots []int
+	for i := range flat {
+		if parent[i] == -1 {
+			roots = append(roots, i)
 			continue
 		}
-		i, ok := at[factOf[b.ParentID]]
-		if !ok {
-			top = append(top, b)
-			continue
-		}
-		top[i].Children = append(top[i].Children, b)
+		kids[parent[i]] = append(kids[parent[i]], i)
 	}
-	return top
+
+	var build func(int) Bullet
+	build = func(i int) Bullet {
+		b := flat[i]
+		b.Children = nil
+		for _, k := range kids[i] {
+			b.Children = append(b.Children, build(k))
+		}
+		return b
+	}
+	out := make([]Bullet, 0, len(roots))
+	for _, i := range roots {
+		out = append(out, build(i))
+	}
+	return out
+}
+
+// flattenBullets returns every bullet in the tree, each with no children.
+func flattenBullets(bullets []Bullet) []Bullet {
+	var out []Bullet
+	var walk func([]Bullet)
+	walk = func(bs []Bullet) {
+		for _, b := range bs {
+			children := b.Children
+			b.Children = nil
+			out = append(out, b)
+			walk(children)
+		}
+	}
+	walk(bullets)
+	return out
 }
 
 type Project struct {

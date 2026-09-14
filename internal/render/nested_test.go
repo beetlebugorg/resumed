@@ -21,7 +21,12 @@ func nestedDoc() *store.Document {
 					{ID: 2, RoleID: 1, ParentID: 1, Text: "Moved every service into a private network."},
 					{ID: 3, RoleID: 1, ParentID: 1, Text: "Restricted database access to a VPN connection."},
 				}},
-				{ID: 4, RoleID: 1, Text: "A bullet with no children."},
+				{ID: 4, RoleID: 1, Text: "GitOps on Terraform and GitHub Actions.", Children: []store.Bullet{
+					{ID: 5, RoleID: 1, ParentID: 4, Text: "An ephemeral environment per pull request.", Children: []store.Bullet{
+						{ID: 6, RoleID: 1, ParentID: 5, Text: "Scaled to zero when idle."},
+					}},
+				}},
+				{ID: 7, RoleID: 1, Text: "A bullet with no children."},
 			},
 		}},
 	}
@@ -32,28 +37,29 @@ func nestedDoc() *store.Document {
 func TestTypstIndentsChildBullets(t *testing.T) {
 	src := Typst(nestedDoc())
 
-	var parent, child, plain string
-	for _, line := range strings.Split(src, "\n") {
-		switch {
-		case strings.Contains(line, "hardened a cloud platform"):
-			parent = line
-		case strings.Contains(line, "private network"):
-			child = line
-		case strings.Contains(line, "no children"):
-			plain = line
+	find := func(want string) string {
+		for _, line := range strings.Split(src, "\n") {
+			if strings.Contains(line, want) {
+				return line
+			}
 		}
-	}
-	if parent == "" || child == "" || plain == "" {
-		t.Fatalf("missing bullets in output:\n%s", src)
+		t.Fatalf("no bullet matching %q in output:\n%s", want, src)
+		return ""
 	}
 	indent := func(s string) int { return len(s) - len(strings.TrimLeft(s, " ")) }
-	if indent(child) <= indent(parent) {
-		t.Errorf("child indent %d, parent indent %d: child must be deeper",
-			indent(child), indent(parent))
+
+	// Three levels, each deeper than the one above it.
+	top := indent(find("hardened a cloud platform"))
+	second := indent(find("private network"))
+	third := indent(find("Scaled to zero"))
+	if !(top < second && second < third) {
+		t.Errorf("indents are %d, %d, %d: each level must be deeper", top, second, third)
 	}
-	if indent(plain) != indent(parent) {
-		t.Errorf("childless bullet indent %d, want %d to match a parent",
-			indent(plain), indent(parent))
+	if got := indent(find("no children")); got != top {
+		t.Errorf("childless bullet indent %d, want %d to match a lead-in", got, top)
+	}
+	if got := indent(find("ephemeral environment")); got != second {
+		t.Errorf("second-level bullet indent %d, want %d", got, second)
 	}
 }
 

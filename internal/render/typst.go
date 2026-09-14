@@ -304,13 +304,16 @@ func Typst(doc *store.Document) string {
 			}
 			if len(r.Bullets) > 0 {
 				b.WriteString("  details: [\n")
-				for _, bl := range r.Bullets {
-					fmt.Fprintf(&b, "    - %s\n", escTerms(bl.Text, hi))
-					// Typst reads a deeper indent as a nested list.
-					for _, ch := range bl.Children {
-						fmt.Fprintf(&b, "      - %s\n", escTerms(ch.Text, hi))
+				// Typst reads a deeper indent as a deeper list level.
+				var write func([]store.Bullet, int)
+				write = func(bullets []store.Bullet, depth int) {
+					for _, bl := range bullets {
+						fmt.Fprintf(&b, "%s- %s\n",
+							strings.Repeat("  ", depth+2), escTerms(bl.Text, hi))
+						write(bl.Children, depth+1)
 					}
 				}
+				write(r.Bullets, 0)
 				b.WriteString("  ],\n")
 			}
 			b.WriteString(")\n\n")
